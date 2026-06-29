@@ -1,0 +1,130 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lumenfall WebGL spike</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #hud {
+    position: fixed; left: 16px; top: 16px;
+    font: 14px/1.4 monospace; color: #7fffd4; opacity: .9;
+    text-shadow: 0 1px 2px #000; white-space: pre;
+  }
+</style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="hud">Lumenfall WebGL spike — booting…</div>
+  <script>
+    // ---- The decisive strategy-B test ----
+    // A fullscreen fragment shader is pure-GPU work. If this renders, the WebView
+    // is genuinely hardware-accelerated on the wallpaper's VirtualDisplay — the
+    // thing software-draw (strategy A) cannot do. We report the GPU renderer
+    // string over the native bridge so the logs prove which device drew it.
+
+    var cv = document.getElementById('c');
+    var hud = document.getElementById('hud');
+    var dpr = window.devicePixelRatio || 1;
+
+    function report(obj) {
+      // No "heartbeat" key -> host logs this via onLog ("web bridge: ...").
+      if (window.aetherDesk) window.aetherDesk.postMessage(obj);
+    }
+
+    var gl = cv.getContext('webgl') || cv.getContext('experimental-webgl');
+    if (!gl) {
+      hud.textContent = 'WebGL spike — FAILED: no WebGL context';
+      report({ webgl: false, error: 'no context' });
+      throw new Error('no webgl');
+    }
+
+    // Read the real GPU (proves hardware path, not SwiftShader/software).
+    var renderer = 'unknown';
+    var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    if (dbg) renderer = gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL);
+    report({ webgl: true, renderer: String(renderer) });
+
+    var vs = 'attribute vec2 p; void main(){ gl_Position = vec4(p,0.0,1.0); }';
+    var fs =
+      'precision highp float; uniform vec2 res; uniform float t;' +
+      'void main(){' +
+      '  vec2 uv = (gl_FragCoord.xy / res) * 2.0 - 1.0;' +
+      '  uv.x *= res.x/res.y;' +
+      '  float v = 0.0;' +
+      '  for(int i=1;i<=6;i++){ float f=float(i);' +
+      '    v += sin(uv.x*f*1.7 + t*0.8 + sin(uv.y*f + t)) * (1.0/f);' +
+      '    v += cos(uv.y*f*1.3 - t*0.6 + cos(uv.x*f - t)) * (1.0/f); }' +
+      '  vec3 col = 0.5 + 0.5*cos(vec3(0.0,2.0,4.0) + v*3.1416 + t*0.3);' +
+      '  gl_FragColor = vec4(col,1.0);' +
+      '}';
+
+    function sh(type, src) {
+      var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+        report({ webgl: false, error: 'shader: ' + gl.getShaderInfoLog(s) });
+      }
+      return s;
+    }
+    var prog = gl.createProgram();
+    gl.attachShader(prog, sh(gl.VERTEX_SHADER, vs));
+    gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+
+    var buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    // One big triangle covering the screen.
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+    var loc = gl.getAttribLocation(prog, 'p');
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    var uRes = gl.getUniformLocation(prog, 'res');
+    var uT = gl.getUniformLocation(prog, 't');
+
+    function resize() {
+      cv.width = Math.floor(innerWidth * dpr);
+      cv.height = Math.floor(innerHeight * dpr);
+      gl.viewport(0, 0, cv.width, cv.height);
+    }
+    resize();
+    addEventListener('resize', resize);
+
+    var suspended = false;
+    function bindHost() {
+      if (window.aetherDesk && window.aetherDesk.system) {
+        window.aetherDesk.system.suspend = function () { suspended = true; };
+        window.aetherDesk.system.resume = function () {
+          if (suspended) { suspended = false; requestAnimationFrame(frame); }
+        };
+        return true;
+      }
+      return false;
+    }
+    if (!bindHost()) {
+      var iv = setInterval(function () { if (bindHost()) clearInterval(iv); }, 100);
+    }
+
+    var t0 = performance.now();
+    var frames = 0, fpsAt = t0, fps = 0;
+
+    function frame(now) {
+      if (suspended) return;
+      var t = (now - t0) / 1000;
+      gl.uniform2f(uRes, cv.width, cv.height);
+      gl.uniform1f(uT, t);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+      frames++;
+      if (now - fpsAt >= 1000) {
+        fps = frames; frames = 0; fpsAt = now;
+        hud.textContent = 'WebGL spike — ' + fps + ' fps\nGPU: ' + renderer;
+        if (window.aetherDesk) window.aetherDesk.postMessage({ heartbeat: true, fps: fps });
+      }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>

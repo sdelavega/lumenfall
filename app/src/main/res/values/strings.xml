@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Lumenfall</string>
+    <string name="wallpaper_service_name">Lumenfall Live Wallpaper</string>
+    <string name="wallpaper_description">Lively-compatible live wallpapers for Android tablets.</string>
+</resources>

@@ -1,0 +1,135 @@
+mod lively_info;
+mod lively_properties;
+
+pub use lively_info::{LivelyInfo, LivelyInfoParser, WallpaperKind};
+pub use lively_properties::{LivelyPropertiesParser, WallpaperProperty};
+
+use jni::JNIEnv;
+use jni::objects::{JClass, JString};
+use jni::sys::jstring;
+use serde::Serialize;
+
+#[derive(Debug, thiserror::Error)]
+pub enum LumenfallError {
+    #[error("invalid JSON: {0}")]
+    InvalidJson(#[from] serde_json::Error),
+}
+
+pub type Result<T> = std::result::Result<T, LumenfallError>;
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_aetherdesk_lumenfall_core_LumenfallCore_parseLivelyInfo(
+    mut env: JNIEnv,
+    _class: JClass,
+    input: JString,
+) -> jstring {
+    let output = env
+        .get_string(&input)
+        .map(|text| parse_info_json(text.to_string_lossy().as_ref()))
+        .unwrap_or_else(|error| error_json(error.to_string()));
+
+    env.new_string(output)
+        .map(|value| value.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_aetherdesk_lumenfall_core_LumenfallCore_parseLivelyProperties(
+    mut env: JNIEnv,
+    _class: JClass,
+    input: JString,
+) -> jstring {
+    let output = env
+        .get_string(&input)
+        .map(|text| parse_properties_json(text.to_string_lossy().as_ref()))
+        .unwrap_or_else(|error| error_json(error.to_string()));
+
+    env.new_string(output)
+        .map(|value| value.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+fn parse_info_json(text: &str) -> String {
+    match LivelyInfoParser::parse(text) {
+        Ok(info) => serde_json::to_string(&InfoResponse::from(info)).unwrap_or_else(error_json),
+        Err(error) => error_json(error.to_string()),
+    }
+}
+
+fn parse_properties_json(text: &str) -> String {
+    match LivelyPropertiesParser::parse(text) {
+        Ok(properties) => serde_json::to_string(&PropertiesResponse {
+            ok: true,
+            error: None,
+            properties: properties.into_iter().map(PropertyResponse::from).collect(),
+        })
+        .unwrap_or_else(error_json),
+        Err(error) => error_json(error.to_string()),
+    }
+}
+
+fn error_json(error: impl ToString) -> String {
+    serde_json::json!({
+        "ok": false,
+        "error": error.to_string()
+    })
+    .to_string()
+}
+
+#[derive(Debug, Serialize)]
+struct InfoResponse {
+    ok: bool,
+    error: Option<String>,
+    title: String,
+    author: Option<String>,
+    kind: &'static str,
+    file_name: Option<String>,
+    preview_name: Option<String>,
+}
+
+impl From<LivelyInfo> for InfoResponse {
+    fn from(value: LivelyInfo) -> Self {
+        Self {
+            ok: true,
+            error: None,
+            title: value.title,
+            author: value.author,
+            kind: match value.kind {
+                WallpaperKind::Web => "web",
+                WallpaperKind::Video => "video",
+                WallpaperKind::Image => "image",
+                WallpaperKind::Unsupported => "unsupported",
+            },
+            file_name: value.file_name,
+            preview_name: value.preview_name,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct PropertiesResponse {
+    ok: bool,
+    error: Option<String>,
+    properties: Vec<PropertyResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct PropertyResponse {
+    key: String,
+    display_name: String,
+    property_type: String,
+    default_value: Option<serde_json::Value>,
+    raw: serde_json::Value,
+}
+
+impl From<WallpaperProperty> for PropertyResponse {
+    fn from(value: WallpaperProperty) -> Self {
+        Self {
+            key: value.key,
+            display_name: value.display_name,
+            property_type: value.property_type,
+            default_value: value.default_value,
+            raw: value.raw,
+        }
+    }
+}
