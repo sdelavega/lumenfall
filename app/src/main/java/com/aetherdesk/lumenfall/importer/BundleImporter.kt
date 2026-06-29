@@ -4,11 +4,9 @@ import android.content.Context
 import com.aetherdesk.lumenfall.core.LumenfallCore
 import com.aetherdesk.lumenfall.storage.BundleMeta
 import com.aetherdesk.lumenfall.storage.BundleStore
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.InputStream
-import java.util.zip.ZipInputStream
 
 /**
  * Imports a Lively-style bundle (a `.zip`) into app storage: extracts it safely,
@@ -30,9 +28,10 @@ class BundleImporter(context: Context) {
         val dir = store.bundleDir(id)
         return try {
             dir.mkdirs()
-            extractZip(input, dir)
+            BundleFiles.extractZip(input, dir)
 
-            val infoFile = findLivelyInfo(dir) ?: return fail(dir, "No LivelyInfo.json in bundle")
+            val infoFile = BundleFiles.findLivelyInfo(dir)
+                ?: return fail(dir, "No LivelyInfo.json in bundle")
             val validation = validateBundle(dir, infoFile)
                 ?: return fail(dir, "Could not validate bundle")
             if (!validation.ok) return fail(dir, validation.error ?: "Bundle is not supported")
@@ -70,36 +69,6 @@ class BundleImporter(context: Context) {
         return Result.Error(message)
     }
 
-    /** Extract every entry into [destDir], rejecting any path that escapes it. */
-    private fun extractZip(input: InputStream, destDir: File) {
-        val root = destDir.canonicalFile
-        val prefix = root.path + File.separator
-        ZipInputStream(input.buffered()).use { zis ->
-            var entry = zis.nextEntry
-            while (entry != null) {
-                val out = File(root, entry.name).canonicalFile
-                // zip-slip guard: the resolved path must stay under root.
-                if (out.path != root.path && !out.path.startsWith(prefix)) {
-                    throw SecurityException("Zip entry escapes target: ${entry.name}")
-                }
-                if (entry.isDirectory) {
-                    out.mkdirs()
-                } else {
-                    out.parentFile?.mkdirs()
-                    out.outputStream().use { zis.copyTo(it) }
-                }
-                zis.closeEntry()
-                entry = zis.nextEntry
-            }
-        }
-    }
-
-    /** Shallowest `LivelyInfo.json` (bundles sometimes nest under one folder). */
-    private fun findLivelyInfo(dir: File): File? =
-        dir.walkTopDown()
-            .filter { it.isFile && it.name.equals("LivelyInfo.json", ignoreCase = true) }
-            .minByOrNull { it.relativeTo(dir).path.count { c -> c == File.separatorChar } }
-
     private data class Validation(
         val ok: Boolean,
         val error: String?,
@@ -111,16 +80,11 @@ class BundleImporter(context: Context) {
     )
 
     private fun validateBundle(dir: File, infoFile: File): Validation? {
-        val basePath = infoFile.parentFile
-            ?.takeUnless { it.canonicalFile == dir.canonicalFile }
-            ?.relativeTo(dir)
-            ?.invariantSeparatorsPath
-            ?: ""
         val o = JSONObject(
             LumenfallCore.validateBundle(
                 infoJson = infoFile.readText(),
-                basePath = basePath,
-                filesJson = fileInventory(dir).toString()
+                basePath = BundleFiles.metadataBasePath(dir, infoFile),
+                filesJson = BundleFiles.fileInventory(dir).toString()
             )
         )
         return Validation(
@@ -133,18 +97,6 @@ class BundleImporter(context: Context) {
             previewPath = o.stringOrNull("preview_path")
         )
     }
-
-    private fun fileInventory(dir: File): JSONArray =
-        JSONArray().apply {
-            dir.walkTopDown()
-                .filter { it.isFile }
-                .forEach { file ->
-                    put(JSONObject().apply {
-                        put("path", file.relativeTo(dir).invariantSeparatorsPath)
-                        put("size", file.length())
-                    })
-                }
-        }
 }
 
 private fun JSONObject.stringOrNull(key: String): String? =

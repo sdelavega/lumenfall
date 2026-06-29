@@ -93,4 +93,7 @@ dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("androidx.media3:media3-exoplayer:1.7.1")
     implementation("androidx.media3:media3-ui:1.7.1")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }
