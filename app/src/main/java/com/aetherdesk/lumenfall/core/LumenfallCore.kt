@@ -13,4 +13,5 @@ object LumenfallCore {
 
     external fun parseLivelyInfo(json: String): String
     external fun parseLivelyProperties(json: String): String
+    external fun validateBundle(infoJson: String, basePath: String, filesJson: String): String
 }

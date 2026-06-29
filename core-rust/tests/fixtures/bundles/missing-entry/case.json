@@ -1,0 +1,14 @@
+{
+  "base_path": "",
+  "files": [
+    { "path": "LivelyInfo.json", "size": 92 },
+    { "path": "preview.png", "size": 1024 }
+  ],
+  "expected": {
+    "ok": false,
+    "kind": "web",
+    "entry_path": null,
+    "preview_path": null,
+    "error_contains": "No supported entry"
+  }
+}

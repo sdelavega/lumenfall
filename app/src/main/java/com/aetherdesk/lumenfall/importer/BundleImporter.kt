@@ -4,6 +4,7 @@ import android.content.Context
 import com.aetherdesk.lumenfall.core.LumenfallCore
 import com.aetherdesk.lumenfall.storage.BundleMeta
 import com.aetherdesk.lumenfall.storage.BundleStore
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.InputStream
@@ -32,22 +33,17 @@ class BundleImporter(context: Context) {
             extractZip(input, dir)
 
             val infoFile = findLivelyInfo(dir) ?: return fail(dir, "No LivelyInfo.json in bundle")
-            val baseDir = infoFile.parentFile!!
-            val info = parseInfo(infoFile.readText()) ?: return fail(dir, "Could not parse LivelyInfo.json")
-            val entryPath = if (info.fileName != null) {
-                safeRelativeFile(dir, baseDir, info.fileName)
-                    ?: return fail(dir, "Entry file escapes or is missing: ${info.fileName}")
-            } else {
-                inferEntryPath(dir, baseDir, info.kind)
-            }
+            val validation = validateBundle(dir, infoFile)
+                ?: return fail(dir, "Could not validate bundle")
+            if (!validation.ok) return fail(dir, validation.error ?: "Bundle is not supported")
 
             val meta = BundleMeta(
                 id = id,
-                title = info.title.ifBlank { fallbackName },
-                kind = info.kind,
-                author = info.author,
-                entryPath = entryPath,
-                previewPath = info.preview?.let { safeRelativeFile(dir, baseDir, it) },
+                title = validation.title.ifBlank { fallbackName },
+                kind = validation.kind,
+                author = validation.author,
+                entryPath = validation.entryPath,
+                previewPath = validation.previewPath,
                 importedAt = System.currentTimeMillis()
             )
             store.saveMeta(meta)
@@ -104,63 +100,51 @@ class BundleImporter(context: Context) {
             .filter { it.isFile && it.name.equals("LivelyInfo.json", ignoreCase = true) }
             .minByOrNull { it.relativeTo(dir).path.count { c -> c == File.separatorChar } }
 
-    /**
-     * Resolve a Lively metadata path relative to the directory containing
-     * LivelyInfo.json and return a canonical bundle-relative path. Rejects
-     * traversal outside the imported bundle and missing files.
-     */
-    private fun safeRelativeFile(rootDir: File, baseDir: File, name: String): String? {
-        val root = rootDir.canonicalFile
-        val file = File(baseDir, name).canonicalFile
-        val prefix = root.path + File.separator
-        if (file.path != root.path && !file.path.startsWith(prefix)) return null
-        if (!file.isFile) return null
-        return file.relativeTo(root).invariantSeparatorsPath
-    }
-
-    /** Lively metadata usually names the entry, but simple bundles may omit it. */
-    private fun inferEntryPath(rootDir: File, baseDir: File, kind: String): String? {
-        val names = when (kind) {
-            "web" -> WEB_ENTRIES
-            "video" -> VIDEO_EXTENSIONS
-            "image" -> IMAGE_EXTENSIONS
-            else -> return null
-        }
-        val candidates = baseDir.walkTopDown()
-            .filter { it.isFile && !it.nameWithoutExtension.contains("preview", ignoreCase = true) }
-        val found = if (kind == "web") {
-            candidates.firstOrNull { f -> names.any { f.name.equals(it, ignoreCase = true) } }
-        } else {
-            candidates.firstOrNull { f -> names.any { f.extension.equals(it, ignoreCase = true) } }
-        } ?: return null
-        return found.canonicalFile.relativeTo(rootDir.canonicalFile).invariantSeparatorsPath
-    }
-
-    private data class Info(
+    private data class Validation(
+        val ok: Boolean,
+        val error: String?,
         val title: String,
         val author: String?,
         val kind: String,
-        val fileName: String?,
-        val preview: String?
+        val entryPath: String?,
+        val previewPath: String?
     )
 
-    private fun parseInfo(json: String): Info? {
-        val o = JSONObject(LumenfallCore.parseLivelyInfo(json))
-        if (!o.optBoolean("ok", false)) return null
-        return Info(
+    private fun validateBundle(dir: File, infoFile: File): Validation? {
+        val basePath = infoFile.parentFile
+            ?.takeUnless { it.canonicalFile == dir.canonicalFile }
+            ?.relativeTo(dir)
+            ?.invariantSeparatorsPath
+            ?: ""
+        val o = JSONObject(
+            LumenfallCore.validateBundle(
+                infoJson = infoFile.readText(),
+                basePath = basePath,
+                filesJson = fileInventory(dir).toString()
+            )
+        )
+        return Validation(
+            ok = o.optBoolean("ok", false),
+            error = o.stringOrNull("error"),
             title = o.optString("title", "Untitled"),
             author = o.stringOrNull("author"),
             kind = o.optString("kind", "unsupported"),
-            fileName = o.stringOrNull("file_name"),
-            preview = o.stringOrNull("preview_name")
+            entryPath = o.stringOrNull("entry_path"),
+            previewPath = o.stringOrNull("preview_path")
         )
     }
 
-    private companion object {
-        val WEB_ENTRIES = setOf("index.html", "index.htm")
-        val VIDEO_EXTENSIONS = setOf("mp4", "mov", "m4v", "webm", "mkv")
-        val IMAGE_EXTENSIONS = setOf("png", "jpg", "jpeg", "webp", "gif", "bmp")
-    }
+    private fun fileInventory(dir: File): JSONArray =
+        JSONArray().apply {
+            dir.walkTopDown()
+                .filter { it.isFile }
+                .forEach { file ->
+                    put(JSONObject().apply {
+                        put("path", file.relativeTo(dir).invariantSeparatorsPath)
+                        put("size", file.length())
+                    })
+                }
+        }
 }
 
 private fun JSONObject.stringOrNull(key: String): String? =

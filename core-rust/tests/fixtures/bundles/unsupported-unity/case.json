@@ -1,0 +1,14 @@
+{
+  "base_path": "",
+  "files": [
+    { "path": "LivelyInfo.json", "size": 96 },
+    { "path": "wallpaper.exe", "size": 4096 }
+  ],
+  "expected": {
+    "ok": false,
+    "kind": "unsupported",
+    "entry_path": null,
+    "preview_path": null,
+    "error_contains": "Unsupported"
+  }
+}

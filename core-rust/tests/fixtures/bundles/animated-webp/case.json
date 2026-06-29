@@ -1,0 +1,14 @@
+{
+  "base_path": "",
+  "files": [
+    { "path": "LivelyInfo.json", "size": 90 },
+    { "path": "pulse.webp", "size": 2048 }
+  ],
+  "expected": {
+    "ok": true,
+    "kind": "image",
+    "entry_path": "pulse.webp",
+    "preview_path": null,
+    "error_contains": null
+  }
+}

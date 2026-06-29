@@ -1,0 +1,14 @@
+{
+  "base_path": "Bundle",
+  "files": [
+    { "path": "Bundle/LivelyInfo.json", "size": 92 },
+    { "path": "Bundle/index.html", "size": 1024 }
+  ],
+  "expected": {
+    "ok": false,
+    "kind": "web",
+    "entry_path": null,
+    "preview_path": null,
+    "error_contains": "No supported entry"
+  }
+}

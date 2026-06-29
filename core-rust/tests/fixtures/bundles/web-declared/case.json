@@ -1,0 +1,15 @@
+{
+  "base_path": "",
+  "files": [
+    { "path": "LivelyInfo.json", "size": 120 },
+    { "path": "index.html", "size": 1024 },
+    { "path": "preview.gif", "size": 4096 }
+  ],
+  "expected": {
+    "ok": true,
+    "kind": "web",
+    "entry_path": "index.html",
+    "preview_path": "preview.gif",
+    "error_contains": null
+  }
+}

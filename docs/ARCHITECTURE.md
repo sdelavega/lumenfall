@@ -25,15 +25,24 @@ Lumenfall is split into these layers:
 9. `app/.../render/PropertyBus`: process-local fan-out of live property changes
    from the settings UI to any concurrently-running renderer.
 
-Bundle flow: import zip -> extract to `bundles/<id>/` -> parse `LivelyInfo.json`
-(Rust) -> persist `BundleMeta` -> picker sets active -> the engine loads the
+Bundle flow: import zip -> extract to `bundles/<id>/` with zip-slip protection
+-> locate `LivelyInfo.json` -> send the metadata base path plus a normalized file
+inventory to the Rust validator -> persist `BundleMeta` only when Rust returns an
+admissible web/video/image bundle -> picker sets active -> the engine loads the
 active bundle. Web bundles load from
 `https://appassets.androidplatform.net/bundles/<id>/<entry>` (served by
 `InternalStoragePathHandler`); video/image read the file directly from
-`bundles/<id>/<entry>`. All of web/video/image render; only `unsupported` kinds
-fall back to the default. A selected bundle takes effect when the engine is
-(re)created (the picker reopens the wallpaper preview to do this); live in-place
-swap is a later refinement.
+`bundles/<id>/<entry>`. Unsupported Lively types are rejected at import with a
+clear reason. A selected bundle takes effect when the engine is (re)created (the
+picker reopens the wallpaper preview to do this); live in-place swap is a later
+refinement.
+
+Validation lives in Rust (`bundle_validation.rs`) so it is testable without
+Android. The current corpus covers declared web entries, nested bundles with
+missing `FileName`, video, GIF/WebP image entries, path traversal attempts,
+unsupported Lively enum values, and missing entries. Current limits are 2,000
+files, 512 MB total bundle size, and 256 MB per file; Kotlin still does the
+transactional extraction and supplies file paths/sizes to Rust.
 
 Properties / the bridge contract: a web bundle's effective values (schema defaults
 overlaid with overrides) are baked into `window.aetherDesk.properties` at
@@ -60,6 +69,7 @@ Current JNI shape:
 
 - Kotlin calls `LumenfallCore.parseLivelyInfo(json)`.
 - Kotlin calls `LumenfallCore.parseLivelyProperties(json)`.
+- Kotlin calls `LumenfallCore.validateBundle(infoJson, basePath, filesJson)`.
 - Rust returns normalized JSON envelopes for now. That avoids duplicating the
   full model in Kotlin while the engine is still moving.
 

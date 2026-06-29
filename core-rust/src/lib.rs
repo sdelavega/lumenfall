@@ -1,6 +1,8 @@
+mod bundle_validation;
 mod lively_info;
 mod lively_properties;
 
+pub use bundle_validation::{BundleValidation, BundleValidationResponse, BundleValidator};
 pub use lively_info::{LivelyInfo, LivelyInfoParser, WallpaperKind};
 pub use lively_properties::{LivelyPropertiesParser, WallpaperProperty};
 
@@ -49,6 +51,34 @@ pub extern "system" fn Java_com_aetherdesk_lumenfall_core_LumenfallCore_parseLiv
         .unwrap_or(std::ptr::null_mut())
 }
 
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_aetherdesk_lumenfall_core_LumenfallCore_validateBundle(
+    mut env: JNIEnv,
+    _class: JClass,
+    info_json: JString,
+    base_path: JString,
+    files_json: JString,
+) -> jstring {
+    let output = env
+        .get_string(&info_json)
+        .and_then(|info| {
+            env.get_string(&base_path).and_then(|base| {
+                env.get_string(&files_json).map(|files| {
+                    validate_bundle_json(
+                        info.to_string_lossy().as_ref(),
+                        base.to_string_lossy().as_ref(),
+                        files.to_string_lossy().as_ref(),
+                    )
+                })
+            })
+        })
+        .unwrap_or_else(|error| error_json(error.to_string()));
+
+    env.new_string(output)
+        .map(|value| value.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
 fn parse_info_json(text: &str) -> String {
     match LivelyInfoParser::parse(text) {
         Ok(info) => serde_json::to_string(&InfoResponse::from(info)).unwrap_or_else(error_json),
@@ -64,6 +94,14 @@ fn parse_properties_json(text: &str) -> String {
             properties: properties.into_iter().map(PropertyResponse::from).collect(),
         })
         .unwrap_or_else(error_json),
+        Err(error) => error_json(error.to_string()),
+    }
+}
+
+fn validate_bundle_json(info_json: &str, base_path: &str, files_json: &str) -> String {
+    match BundleValidator::validate(info_json, base_path, files_json) {
+        Ok(validation) => serde_json::to_string(&BundleValidationResponse::from(validation))
+            .unwrap_or_else(error_json),
         Err(error) => error_json(error.to_string()),
     }
 }

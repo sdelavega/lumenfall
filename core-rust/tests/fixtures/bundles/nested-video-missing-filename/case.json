@@ -1,0 +1,15 @@
+{
+  "base_path": "Nested",
+  "files": [
+    { "path": "Nested/LivelyInfo.json", "size": 96 },
+    { "path": "Nested/preview.jpg", "size": 2048 },
+    { "path": "Nested/loop.mp4", "size": 8192 }
+  ],
+  "expected": {
+    "ok": true,
+    "kind": "video",
+    "entry_path": "Nested/loop.mp4",
+    "preview_path": "Nested/preview.jpg",
+    "error_contains": null
+  }
+}
