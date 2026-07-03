@@ -6,10 +6,12 @@ import android.view.SurfaceHolder
 import com.aetherdesk.lumenfall.image.ImageWallpaperRenderer
 import com.aetherdesk.lumenfall.render.PropertyBus
 import com.aetherdesk.lumenfall.render.WallpaperRenderer
+import com.aetherdesk.lumenfall.storage.AppSettingsStore
 import com.aetherdesk.lumenfall.storage.BundleMeta
 import com.aetherdesk.lumenfall.storage.BundleStore
 import com.aetherdesk.lumenfall.video.VideoWallpaperRenderer
 import com.aetherdesk.lumenfall.web.BundleWebView
+import com.aetherdesk.lumenfall.web.PerformancePolicy
 import com.aetherdesk.lumenfall.web.WallpaperWebViewHost
 
 class LumenfallWallpaperService : WallpaperService() {
@@ -83,12 +85,20 @@ class LumenfallWallpaperService : WallpaperService() {
             // (pre-screening imports) run as "limited" — the conservative default.
             val screening = webBundle?.let { store.screening(it.id) }
             val limited = webBundle != null && (screening?.limited ?: true)
+            val settings = AppSettingsStore(service).get()
+            val resolved = PerformancePolicy.resolve(
+                service, settings, screening?.fpsCap ?: BundleWebView.DEFAULT_FPS_CAP
+            )
             val host = WallpaperWebViewHost(
                 context = service,
                 initialProperties = props,
-                fpsCap = screening?.fpsCap ?: BundleWebView.DEFAULT_FPS_CAP,
+                fpsCap = resolved.fpsCap,
                 networkBudgetPerMinute =
                     if (limited) screening?.networkBudgetPerMinute ?: 5 else null,
+                blockExternalNetwork = settings.blockExternalNetwork,
+                allowLan = settings.allowLan,
+                initiallySuspended = resolved.initiallySuspended,
+                pauseWhenHidden = settings.pauseWhenNotVisible,
                 onHeartbeat = { Log.d(TAG, "web heartbeat") },
                 onLog = { Log.d(TAG, "web bridge: $it") }
             )

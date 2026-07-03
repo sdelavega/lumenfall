@@ -37,6 +37,11 @@ class WallpaperWebViewHost(
     private val initialProperties: String = "{}",
     private val fpsCap: Int = BundleWebView.DEFAULT_FPS_CAP,
     private val networkBudgetPerMinute: Int? = null,
+    private val blockExternalNetwork: Boolean = false,
+    private val allowLan: Boolean = false,
+    private val initiallySuspended: Boolean = false,
+    /** Global Performance setting: whether hiding the wallpaper should pause it at all. */
+    private val pauseWhenHidden: Boolean = true,
     private val onHeartbeat: () -> Unit = {},
     private val onLog: (String) -> Unit = {}
 ) : WallpaperRenderer {
@@ -93,6 +98,10 @@ class WallpaperWebViewHost(
             initialProperties = initialProperties,
             fpsCap = fpsCap,
             networkBudgetPerMinute = networkBudgetPerMinute,
+            blockExternalNetwork = blockExternalNetwork,
+            allowLan = allowLan,
+            initiallySuspended = initiallySuspended,
+            pauseWhenHidden = pauseWhenHidden,
             onHeartbeat = onHeartbeat,
             onLog = onLog
         )
@@ -148,6 +157,10 @@ private class WallpaperPresentation(
     private val initialProperties: String,
     private val fpsCap: Int,
     private val networkBudgetPerMinute: Int?,
+    private val blockExternalNetwork: Boolean,
+    private val allowLan: Boolean,
+    private val initiallySuspended: Boolean,
+    private val pauseWhenHidden: Boolean,
     private val onHeartbeat: () -> Unit,
     private val onLog: (String) -> Unit
 ) : Presentation(outerContext, targetDisplay) {
@@ -162,6 +175,9 @@ private class WallpaperPresentation(
             initialProperties = initialProperties,
             fpsCap = fpsCap,
             networkBudgetPerMinute = networkBudgetPerMinute,
+            blockExternalNetwork = blockExternalNetwork,
+            allowLan = allowLan,
+            initiallySuspended = initiallySuspended,
             onHeartbeat = onHeartbeat,
             onLog = onLog
         ).apply {
@@ -173,6 +189,13 @@ private class WallpaperPresentation(
         setContentView(wv)
         webView = wv
         pendingUrl?.let(wv::loadUrl)
+        if (!pauseWhenHidden) {
+            // This engine never wants its timers paused on hide — hold a
+            // permanent claim so a stale pause latch left by a prior engine
+            // (WebViewTimers is process-shared) can't leave this WebView
+            // silently frozen before the first onVisibilityChanged(true).
+            WebViewTimers.setNeedsTimers(this, wv, true)
+        }
     }
 
     fun load(url: String) {
@@ -185,17 +208,28 @@ private class WallpaperPresentation(
         webView?.let { BundleWebView.pushProperty(it, key, value) }
     }
 
-    /** Maps wallpaper visibility to WebView lifecycle + a JS suspend/resume hook. */
+    /**
+     * Maps wallpaper visibility to WebView lifecycle + a JS suspend/resume hook.
+     * [pauseWhenHidden] (the "Pause when wallpaper is not visible" Performance
+     * setting, default on — matching ÆtherDesk) gates only the suspend/resume
+     * JS call and the timer latch; the underlying WebView lifecycle calls
+     * (onResume/onPause) still track visibility regardless, since those are an
+     * Android correctness requirement, not a soft preference.
+     */
     fun setContentVisible(visible: Boolean) {
         val wv = webView ?: return
         if (visible) {
             wv.onResume()
-            WebViewTimers.setNeedsTimers(this, wv, true)
-            wv.evaluateJavascript("window.aetherDesk && window.aetherDesk.system.resume();", null)
+            if (pauseWhenHidden) {
+                WebViewTimers.setNeedsTimers(this, wv, true)
+                wv.evaluateJavascript("window.aetherDesk && window.aetherDesk.system.resume();", null)
+            }
         } else {
-            wv.evaluateJavascript("window.aetherDesk && window.aetherDesk.system.suspend();", null)
             wv.onPause()
-            WebViewTimers.setNeedsTimers(this, wv, false)
+            if (pauseWhenHidden) {
+                wv.evaluateJavascript("window.aetherDesk && window.aetherDesk.system.suspend();", null)
+                WebViewTimers.setNeedsTimers(this, wv, false)
+            }
         }
     }
 

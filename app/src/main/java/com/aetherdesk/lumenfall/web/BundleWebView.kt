@@ -23,8 +23,9 @@ import java.io.File
  * The WebView it returns:
  * - serves bundle content over the virtual `https` origin (`/assets/` from app
  *   assets, `/bundles/` from filesDir/bundles) with no filesystem reach;
- * - runs every non-local request through [WallpaperNetworkPolicy] and refuses
- *   main-frame navigation off the bundle origin;
+ * - runs every non-local request through [WallpaperNetworkPolicy] (screening-
+ *   derived budget plus the global Performance settings' blockExternalNetwork/
+ *   allowLan) and refuses main-frame navigation off the bundle origin;
  * - injects the ÆtherDesk bridge (properties, fps-capped rAF, raw-IP WebSocket
  *   guard) at document-start where supported, post-load otherwise.
  */
@@ -45,6 +46,9 @@ object BundleWebView {
         initialProperties: String = "{}",
         fpsCap: Int = DEFAULT_FPS_CAP,
         networkBudgetPerMinute: Int? = null,
+        blockExternalNetwork: Boolean = false,
+        allowLan: Boolean = false,
+        initiallySuspended: Boolean = false,
         onHeartbeat: () -> Unit = {},
         onLog: (String) -> Unit = {}
     ): WebView {
@@ -53,9 +57,13 @@ object BundleWebView {
             .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
             .addPathHandler("/bundles/", WebViewAssetLoader.InternalStoragePathHandler(context, bundlesDir))
             .build()
-        val networkPolicy = WallpaperNetworkPolicy(networkBudgetPerMinute)
+        val networkPolicy = WallpaperNetworkPolicy(
+            budgetPerMinute = networkBudgetPerMinute,
+            blockAllExternal = blockExternalNetwork,
+            allowLan = allowLan
+        )
 
-        val shim = buildShim(initialProperties, fpsCap.coerceIn(MIN_FPS, MAX_FPS))
+        val shim = buildShim(initialProperties, fpsCap.coerceIn(MIN_FPS, MAX_FPS), initiallySuspended)
         val docStartSupported =
             WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
 
@@ -150,11 +158,11 @@ object BundleWebView {
      *   sockets stay allowed) — sockets bypass shouldInterceptRequest, so this
      *   is the only hook Android gives us.
      */
-    private fun buildShim(propertiesJson: String, fpsCap: Int): String = """
+    private fun buildShim(propertiesJson: String, fpsCap: Int, initiallySuspended: Boolean): String = """
         (function () {
           if (window.aetherDesk) return;
           var native = window.aetherDeskNative;
-          var suspended = false;
+          var suspended = $initiallySuspended;
           window.aetherDesk = {
             properties: $propertiesJson,
             system: {
