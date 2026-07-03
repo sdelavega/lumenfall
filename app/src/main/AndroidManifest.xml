@@ -11,6 +11,12 @@
          the screener's network/heavy-GPU heuristics never even sees the surface. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
+    <!-- The native fetch proxy (NativeFetchBridge) makes HTTP requests on
+         behalf of web wallpaper bundles, bypassing the WebView's CORS
+         enforcement so bundles can reach external APIs. Without this, the
+         proxy can't open any connection. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher"

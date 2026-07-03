@@ -128,6 +128,16 @@ object BundleWebView {
             // connections, so without this a hostname resolving to a private/
             // metadata IP would bypass the network policy entirely.
             addJavascriptInterface(WebSocketGuard(this), "aetherDeskWebSocket")
+            // Native fetch proxy: routes external fetch()/XHR through native
+            // HttpURLConnection, bypassing the WebView's CORS enforcement so
+            // bundles can reach external APIs (weather, geocoding). Same
+            // network policy + budget applies. Always registered (it's a policy
+            // enforcement point, not a user preference); the shim only routes
+            // external http(s) through it.
+            addJavascriptInterface(
+                NativeFetchBridge(this, networkPolicy, onLog),
+                "aetherDeskFetch"
+            )
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(
                     view: WebView,
@@ -503,6 +513,130 @@ object BundleWebView {
             ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'].forEach(function(k) {
               window.WebSocket[k] = BridgeWebSocket[k];
             });
+          }
+
+          // --- Native fetch/XHR proxy -------------------------------------------
+          // Routes external http(s) fetch() and XMLHttpRequest through native
+          // HttpURLConnection, bypassing the WebView's CORS enforcement. The
+          // bundle origin (appassets.androidplatform.net) can't read cross-origin
+          // responses from external APIs without this — the WebView blocks them
+          // even though shouldInterceptRequest let the request through. Same
+          // network policy (blocklist + SSRF + budget) applies on the native
+          // side; a blocked fetch resolves with status 0 (rejected as a
+          // TypeError). Same-origin (appassets) requests go through the original
+          // fetch (they're bundle assets served by WebViewAssetLoader).
+          var _pendingFetches = {};
+          var _fetchId = 0;
+          window.aetherDesk._nativeFetchResponse = function(resp) {
+            var p = _pendingFetches[resp.id];
+            if (!p) return;
+            delete _pendingFetches[resp.id];
+            if (resp.status === 0) {
+              p.reject(new TypeError('Network request failed'));
+              return;
+            }
+            try {
+              p.resolve(new Response(resp.body, { status: resp.status }));
+            } catch(e) {
+              p.reject(e);
+            }
+          };
+
+          if (typeof window.fetch === 'function') {
+            var _origFetch = window.fetch.bind(window);
+            window.fetch = function(resource, options) {
+              var urlStr = (typeof resource === 'string') ? resource
+                : (resource && resource.url) ? resource.url
+                : (resource ? String(resource) : '');
+              // Only proxy external http(s); same-origin (appassets) and other
+              // schemes go through the original fetch.
+              if (urlStr.indexOf('http://') === 0 || urlStr.indexOf('https://') === 0) {
+                return new Promise(function(resolve, reject) {
+                  var id = String(++_fetchId);
+                  _pendingFetches[id] = { resolve: resolve, reject: reject };
+                  try {
+                    var hdrs = null;
+                    if (options && options.headers) {
+                      var h = options.headers;
+                      if (h instanceof Headers) {
+                        hdrs = {};
+                        h.forEach(function(v, k) { hdrs[k] = v; });
+                      } else if (typeof h === 'object') {
+                        hdrs = JSON.stringify(h);
+                      }
+                    }
+                    window.aetherDeskFetch.request(
+                      id,
+                      urlStr,
+                      (options && options.method) || 'GET',
+                      (options && options.body != null) ? String(options.body) : null,
+                      hdrs
+                    );
+                  } catch(e) {
+                    delete _pendingFetches[id];
+                    reject(new TypeError('Native fetch bridge unavailable'));
+                  }
+                });
+              }
+              return _origFetch.apply(window, arguments);
+            };
+          }
+
+          if (typeof window.XMLHttpRequest === 'function') {
+            var _OrigXHR = window.XMLHttpRequest;
+            function NativeXHR() {
+              this.readyState = 0;
+              this.status = 0;
+              this.statusText = '';
+              this.responseText = '';
+              this.response = '';
+              this.responseURL = '';
+              this.responseType = '';
+              this.timeout = 0;
+              this.withCredentials = false;
+              this._method = 'GET';
+              this._url = '';
+              this._headers = {};
+            }
+            NativeXHR.UNSENT = 0; NativeXHR.OPENED = 1;
+            NativeXHR.HEADERS_RECEIVED = 2; NativeXHR.LOADING = 3; NativeXHR.DONE = 4;
+            NativeXHR.prototype.open = function(method, url, async) {
+              this._method = method;
+              this._url = url;
+              this.readyState = NativeXHR.OPENED;
+              if (this.onreadystatechange) { try { this.onreadystatechange(); } catch(e) {} }
+            };
+            NativeXHR.prototype.setRequestHeader = function(h, v) { this._headers[h] = v; };
+            NativeXHR.prototype.send = function(body) {
+              var self = this;
+              fetch(this._url, {
+                method: this._method,
+                body: body != null ? String(body) : null,
+                headers: this._headers
+              }).then(function(resp) {
+                return resp.text().then(function(text) {
+                  return { resp: resp, text: text };
+                });
+              }).then(function(result) {
+                self.status = result.resp.status;
+                self.statusText = result.resp.statusText;
+                self.responseText = result.text;
+                self.response = result.text;
+                self.responseURL = result.resp.url || self._url;
+                self.readyState = NativeXHR.DONE;
+                if (self.onload) { try { self.onload(); } catch(e) {} }
+                if (self.onreadystatechange) { try { self.onreadystatechange(); } catch(e) {} }
+              }).catch(function(err) {
+                self.readyState = NativeXHR.DONE;
+                if (self.onerror) { try { self.onerror(err); } catch(e) {} }
+                if (self.onreadystatechange) { try { self.onreadystatechange(); } catch(e) {} }
+              });
+            };
+            NativeXHR.prototype.abort = function() {};
+            NativeXHR.prototype.getResponseHeader = function() { return null; };
+            NativeXHR.prototype.getAllResponseHeaders = function() { return ''; };
+            NativeXHR.prototype.overrideMimeType = function() {};
+            window.XMLHttpRequest = NativeXHR;
           }
 
           // --- Geolocation ----------------------------------------------------
