@@ -28,4 +28,7 @@
 
     <color name="glass_text_primary">#FFFFFFFF</color>
     <color name="glass_text_secondary">#B3FFFFFF</color>
+    <color name="glass_text_on_accent">#0B0F1A</color>
+
+    <color name="glass_danger">#FF6B6B</color>
 </resources>

@@ -23,15 +23,16 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import com.aetherdesk.lumenfall.R
 import com.aetherdesk.lumenfall.render.PropertyBus
+import com.aetherdesk.lumenfall.storage.AppSettingsStore
 import com.aetherdesk.lumenfall.storage.BundleProperty
 import com.aetherdesk.lumenfall.storage.BundleStore
 import com.aetherdesk.lumenfall.web.BundleWebView
 import com.aetherdesk.lumenfall.web.PerformanceGovernor
+import com.aetherdesk.lumenfall.web.PerformancePolicy
 import com.aetherdesk.lumenfall.web.WebViewTimers
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.slider.Slider
@@ -228,12 +229,19 @@ class BundleSettingsActivity : AppCompatActivity() {
     private fun buildPreviewContainer(entryPath: String, effectiveJson: String): View {
         val screening = store.screening(bundleId)
         val limited = screening?.limited ?: true
-        currentPreviewFpsCap = screening?.fpsCap ?: BundleWebView.DEFAULT_FPS_CAP
+        val settings = AppSettingsStore(this).get()
+        val resolved = PerformancePolicy.resolve(
+            this, settings, screening?.fpsCap ?: BundleWebView.DEFAULT_FPS_CAP
+        )
+        currentPreviewFpsCap = resolved.fpsCap
         val wv = BundleWebView.create(
             context = this,
             initialProperties = effectiveJson,
             fpsCap = currentPreviewFpsCap,
             networkBudgetPerMinute = if (limited) screening?.networkBudgetPerMinute ?: 5 else null,
+            blockExternalNetwork = settings.blockExternalNetwork,
+            allowLan = settings.allowLan,
+            initiallySuspended = resolved.initiallySuspended,
             onLog = { handlePreviewMessage(it) }
         ).apply { layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT) }
 
@@ -524,7 +532,7 @@ class BundleSettingsActivity : AppCompatActivity() {
         addTextChangedListener(watcher)
     }
 
-    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+    private fun toast(msg: String) = GlassUi.toast(this, msg)
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
