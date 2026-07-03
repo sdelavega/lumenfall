@@ -43,8 +43,8 @@ import kotlin.concurrent.thread
  * (wallpapers/import left, performance/about right) in landscape, stacked
  * (wallpapers/import top, performance/about bottom) in portrait — same
  * relayout-on-rotation pattern as [BundleSettingsActivity]. Every visual
- * element is drawn from [GlassUi]; no stock Android widget chrome (buttons,
- * AlertDialog, Toast) appears anywhere in this screen.
+ * element is drawn from [GlassUi]'s Fluent acrylic controls; no stock Android
+ * widget chrome (buttons, AlertDialog, Toast) appears anywhere in this screen.
  */
 class MainActivity : AppCompatActivity() {
 

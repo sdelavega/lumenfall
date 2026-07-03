@@ -25,17 +25,15 @@ import com.aetherdesk.lumenfall.R
 import com.google.android.material.button.MaterialButton
 
 /**
- * Shared "Liquid Glass" facsimile building blocks — every screen in the app
- * (MainActivity, BundleSettingsActivity) draws from this instead of falling
- * back to stock Android widget chrome: flat gray buttons, system
- * AlertDialogs, system Toasts. See docs/ARCHITECTURE.md for why this is
- * translucency + rounded corners rather than real backdrop blur (Android has
- * no public API for that outside Compose + a blur library).
+ * Shared Fluent dark/acrylic building blocks. Android does not expose Windows'
+ * real acrylic blur for arbitrary programmatic views, so the resources below
+ * approximate the material with dark translucent fills, compact radii, crisp
+ * strokes, and a Tar Heel blue accent.
  */
 object GlassUi {
     fun dp(context: Context, v: Int): Int = (v * context.resources.displayMetrics.density).toInt()
 
-    /** Wraps [inner] in a translucent rounded glass card. */
+    /** Wraps [inner] in a compact acrylic-style card. */
     fun panel(context: Context, inner: View, bottomMarginDp: Int = 12): View =
         FrameLayout(context).apply {
             setBackgroundResource(R.drawable.glass_panel_bg)
@@ -71,17 +69,23 @@ object GlassUi {
             this.text = text
             setTextColor(context.getColor(R.color.glass_text_on_accent))
             backgroundTintList = ColorStateList.valueOf(context.getColor(R.color.glass_accent))
-            cornerRadius = dp(context, 14)
+            cornerRadius = dp(context, 6)
+            elevation = 0f
+            insetTop = 0
+            insetBottom = 0
             setOnClickListener { onClick() }
         }
 
-    /** Flat, translucent button for secondary/inline actions. */
+    /** Subtle acrylic button for secondary/inline actions. */
     fun flatButton(context: Context, text: String, onClick: () -> Unit): MaterialButton =
         MaterialButton(context).apply {
             this.text = text
             setTextColor(context.getColor(R.color.glass_accent))
-            setBackgroundColor(context.getColor(R.color.glass_field_fill))
-            cornerRadius = dp(context, 14)
+            backgroundTintList = ColorStateList.valueOf(context.getColor(R.color.glass_field_fill))
+            cornerRadius = dp(context, 6)
+            elevation = 0f
+            insetTop = 0
+            insetBottom = 0
             setOnClickListener { onClick() }
         }
 
@@ -181,7 +185,10 @@ object GlassUi {
             backgroundTintList = ColorStateList.valueOf(
                 context.getColor(if (destructive) R.color.glass_danger else R.color.glass_accent)
             )
-            cornerRadius = dp(context, 14)
+            cornerRadius = dp(context, 6)
+            elevation = 0f
+            insetTop = 0
+            insetBottom = 0
             setOnClickListener { onConfirm(); dialog.dismiss() }
         })
         content.addView(buttonRow)

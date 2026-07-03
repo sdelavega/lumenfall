@@ -1,6 +1,8 @@
 <resources>
     <style name="Theme.Lumenfall" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:navigationBarColor">@android:color/black</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">@color/glass_backdrop_top</item>
+        <item name="android:navigationBarColor">@color/glass_backdrop_top</item>
+        <item name="colorAccent">@color/glass_accent</item>
     </style>
 </resources>

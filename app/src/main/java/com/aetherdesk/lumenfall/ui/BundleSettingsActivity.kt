@@ -360,8 +360,7 @@ class BundleSettingsActivity : AppCompatActivity() {
      * The live preview: the real bundle in the shared sandboxed WebView with the
      * same screening limits the wallpaper runs under, subscribed to the bus so
      * [apply]'s existing notify drives it, and watched by [PerformanceGovernor].
-     * Wrapped in a rounded, clipped glass panel so its corners match the rest of
-     * the UI.
+     * Wrapped in a clipped acrylic panel so its corners match the rest of the UI.
      */
     private fun buildPreviewContainer(entryPath: String, effectiveJson: String): View {
         val screening = store.screening(bundleId)
@@ -462,7 +461,7 @@ class BundleSettingsActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    /** Wraps a control's box in a translucent "glass" card, per the ported ÆtherDesk aesthetic. */
+    /** Wraps a control's box in the shared Fluent acrylic card treatment. */
     private fun glassPanel(inner: View): View = FrameLayout(this).apply {
         setBackgroundResource(R.drawable.glass_panel_bg)
         layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(12) }
@@ -495,9 +494,12 @@ class BundleSettingsActivity : AppCompatActivity() {
                 "color" -> colorControl(p, current)
                 "button" -> MaterialButton(this).apply {
                     text = "Run"
-                    setBackgroundColor(getColor(R.color.glass_field_fill))
+                    backgroundTintList = ColorStateList.valueOf(getColor(R.color.glass_field_fill))
                     setTextColor(getColor(R.color.glass_accent))
-                    cornerRadius = dp(14)
+                    cornerRadius = dp(6)
+                    elevation = 0f
+                    insetTop = 0
+                    insetBottom = 0
                     setOnClickListener { PropertyBus.notify(bundleId, p.key, true) }
                 }
                 else -> textControl(p, current) // textbox + unknown -> editable text
@@ -535,6 +537,8 @@ class BundleSettingsActivity : AppCompatActivity() {
             trackHeight = dp(6)
             trackActiveTintList = ColorStateList.valueOf(getColor(R.color.glass_accent))
             trackInactiveTintList = ColorStateList.valueOf(getColor(R.color.glass_track_inactive))
+            tickActiveTintList = ColorStateList.valueOf(getColor(R.color.glass_text_on_accent))
+            tickInactiveTintList = ColorStateList.valueOf(getColor(R.color.glass_track_inactive))
             thumbTintList = ColorStateList.valueOf(getColor(R.color.glass_accent))
             haloTintList = ColorStateList.valueOf(getColor(R.color.glass_accent_dim))
             layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)

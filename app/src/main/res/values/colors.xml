@@ -1,34 +1,33 @@
 <resources>
-    <!-- "Liquid Glass" facsimile palette: translucent frosted panels over a dark
-         backdrop, with a single vivid accent for interactive elements. Android has
-         no public API for real-time backdrop blur of arbitrary content (that's a
-         Compose + custom-compositor feature), so this approximates the material
-         with translucency, soft gradients, thin light borders, and elevation. -->
-    <color name="glass_backdrop_top">#0B0F1A</color>
-    <color name="glass_backdrop_bottom">#141C30</color>
+    <!-- Fluent dark acrylic palette. Android does not expose system acrylic blur
+         for arbitrary programmatic views, so these resources approximate it with
+         dark translucent surfaces, subtle blue-tinted borders, compact radii,
+         and a single Tar Heel blue accent. -->
+    <color name="glass_backdrop_top">#080B10</color>
+    <color name="glass_backdrop_bottom">#111820</color>
 
-    <color name="glass_panel_fill_top">#26FFFFFF</color>
-    <color name="glass_panel_fill_bottom">#0DFFFFFF</color>
-    <color name="glass_panel_stroke">#40FFFFFF</color>
+    <color name="glass_panel_fill_top">#D0161B22</color>
+    <color name="glass_panel_fill_bottom">#B80F141B</color>
+    <color name="glass_panel_stroke">#594B9CD3</color>
 
-    <color name="glass_field_fill">#1AFFFFFF</color>
-    <color name="glass_field_stroke">#33FFFFFF</color>
+    <color name="glass_field_fill">#CC1B222B</color>
+    <color name="glass_field_stroke">#3D9BC4E2</color>
 
-    <color name="glass_track_inactive">#33FFFFFF</color>
-    <color name="glass_accent">#64D2FF</color>
-    <color name="glass_accent_dim">#3364D2FF</color>
+    <color name="glass_track_inactive">#4A5D6C78</color>
+    <color name="glass_accent">#4B9CD3</color>
+    <color name="glass_accent_dim">#334B9CD3</color>
 
     <!-- Floating popups (dropdown menus) sit over arbitrary content, not our
          own controlled dark backdrop, and the anchor view itself keeps
          rendering underneath them — so unlike the inline panels above, a
          translucent fill there lets both bleed through and become unreadable.
          Popups get a solid, opaque dark fill instead. -->
-    <color name="glass_popup_fill">#F0141C30</color>
-    <color name="glass_popup_highlight">#2664D2FF</color>
+    <color name="glass_popup_fill">#F0141A22</color>
+    <color name="glass_popup_highlight">#334B9CD3</color>
 
-    <color name="glass_text_primary">#FFFFFFFF</color>
-    <color name="glass_text_secondary">#B3FFFFFF</color>
-    <color name="glass_text_on_accent">#0B0F1A</color>
+    <color name="glass_text_primary">#F6F8FB</color>
+    <color name="glass_text_secondary">#A9B7C5</color>
+    <color name="glass_text_on_accent">#071018</color>
 
-    <color name="glass_danger">#FF6B6B</color>
+    <color name="glass_danger">#F76363</color>
 </resources>

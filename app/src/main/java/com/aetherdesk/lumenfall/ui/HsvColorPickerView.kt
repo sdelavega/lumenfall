@@ -15,7 +15,7 @@ import android.view.View
 
 /**
  * A compact HSV color picker: a saturation/value pad with a hue bar underneath,
- * drawn to match the glass aesthetic (rounded corners, ring thumbs). Emits
+ * drawn to match the Fluent acrylic aesthetic (compact corners, ring thumbs). Emits
  * [onColorChanged] continuously while dragging — callers pair it with a hex
  * field for exact entry, and settings apply live the same way slider drags do.
  *
@@ -69,7 +69,7 @@ class HsvColorPickerView(context: Context) : View(context) {
     }
 
     override fun onDraw(canvas: Canvas) {
-        val radius = dp(10f)
+        val radius = dp(6f)
 
         // Saturation/value pad: white->hue horizontally, multiplied by
         // white->black vertically.
