@@ -9,6 +9,7 @@ import com.aetherdesk.lumenfall.render.WallpaperRenderer
 import com.aetherdesk.lumenfall.storage.BundleMeta
 import com.aetherdesk.lumenfall.storage.BundleStore
 import com.aetherdesk.lumenfall.video.VideoWallpaperRenderer
+import com.aetherdesk.lumenfall.web.BundleWebView
 import com.aetherdesk.lumenfall.web.WallpaperWebViewHost
 
 class LumenfallWallpaperService : WallpaperService() {
@@ -85,7 +86,7 @@ class LumenfallWallpaperService : WallpaperService() {
             val host = WallpaperWebViewHost(
                 context = service,
                 initialProperties = props,
-                fpsCap = screening?.fpsCap ?: WallpaperWebViewHost.DEFAULT_FPS_CAP,
+                fpsCap = screening?.fpsCap ?: BundleWebView.DEFAULT_FPS_CAP,
                 networkBudgetPerMinute =
                     if (limited) screening?.networkBudgetPerMinute ?: 5 else null,
                 onHeartbeat = { Log.d(TAG, "web heartbeat") },
