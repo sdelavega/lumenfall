@@ -1,0 +1,54 @@
+{
+    "properties": [
+        {
+            "Name": "locationMode",
+            "Description": "Location resolution mode",
+            "Type": "dropdown",
+            "Value": "auto",
+            "Items": ["auto", "manual"]
+        },
+        {
+            "Name": "manualLocation",
+            "Description": "City name or ZIP for manual mode",
+            "Type": "textbox",
+            "Value": "20500"
+        },
+        {
+            "Name": "units",
+            "Description": "Temperature and wind units",
+            "Type": "dropdown",
+            "Value": "imperial",
+            "Items": ["metric", "imperial"]
+        },
+        {
+            "Name": "forecastOpacity",
+            "Description": "Opacity of the forecast strip",
+            "Type": "range",
+            "Value": 0.9,
+            "Min": 0.0,
+            "Max": 1.0,
+            "Increment": 0.05
+        },
+        {
+            "Name": "animationSpeed",
+            "Description": "Speed of particle animations",
+            "Type": "range",
+            "Value": 1.0,
+            "Min": 0.1,
+            "Max": 3.0,
+            "Increment": 0.1
+        },
+        {
+            "Name": "showParticles",
+            "Description": "Show weather particle effects",
+            "Type": "checkbox",
+            "Value": true
+        },
+        {
+            "Name": "accentColor",
+            "Description": "Accent color for UI elements",
+            "Type": "color",
+            "Value": "#6fb8ff"
+        }
+    ]
+}

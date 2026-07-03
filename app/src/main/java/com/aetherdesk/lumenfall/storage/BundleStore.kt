@@ -62,18 +62,23 @@ class BundleStore(context: Context) {
     fun bundleDir(id: String) = File(bundlesDir, id)
     private fun metaFile(id: String) = File(bundleDir(id), META_NAME)
 
-    fun list(): List<BundleMeta> =
-        bundlesDir.listFiles { f -> f.isDirectory }
+    fun list(): List<BundleMeta> {
+        val bundled = BundledWallpapers.list(app)
+        val imported = bundlesDir.listFiles { f -> f.isDirectory }
             ?.mapNotNull { dir -> runCatching { BundleMeta.fromJson(File(dir, META_NAME).readText()) }.getOrNull() }
             ?.sortedByDescending { it.importedAt }
             ?: emptyList()
+        return bundled + imported
+    }
 
     fun get(id: String): BundleMeta? =
-        runCatching { BundleMeta.fromJson(metaFile(id).readText()) }.getOrNull()
+        if (BundledWallpapers.isBundled(id)) BundledWallpapers.get(app, id)
+        else runCatching { BundleMeta.fromJson(metaFile(id).readText()) }.getOrNull()
 
     fun saveMeta(meta: BundleMeta) = metaFile(meta.id).writeText(meta.toJson())
 
     fun delete(id: String) {
+        if (BundledWallpapers.isBundled(id)) return // can't delete a bundled wallpaper
         bundleDir(id).deleteRecursively()
         prefs.edit().remove(geoKey(id)).apply()
         if (activeId == id) activeId = null
@@ -100,16 +105,38 @@ class BundleStore(context: Context) {
     fun savePropertiesEnvelope(id: String, envelope: String) = propsFile(id).writeText(envelope)
 
     fun properties(id: String): List<BundleProperty> =
-        runCatching { BundleProperty.parseEnvelope(propsFile(id).readText()) }.getOrDefault(emptyList())
+        if (BundledWallpapers.isBundled(id)) {
+            // Bundled wallpapers: parse from assets via Rust, cached per call.
+            // No on-disk properties.json to read from.
+            val envelope = BundledWallpapers.propertiesEnvelope(app, id) ?: return emptyList()
+            runCatching {
+                val parsed = com.aetherdesk.lumenfall.core.LumenfallCore.parseLivelyProperties(envelope)
+                BundleProperty.parseEnvelope(parsed)
+            }.getOrDefault(emptyList())
+        } else {
+            runCatching { BundleProperty.parseEnvelope(propsFile(id).readText()) }.getOrDefault(emptyList())
+        }
 
     fun overrides(id: String): JSONObject =
-        runCatching { JSONObject(overridesFile(id).readText()) }.getOrDefault(JSONObject())
+        if (BundledWallpapers.isBundled(id)) {
+            // Overrides for bundled wallpapers live in SharedPreferences only
+            // (there's no on-disk overrides.json).
+            prefs.getString("overrides_$id", null)?.let { JSONObject(it) } ?: JSONObject()
+        } else {
+            runCatching { JSONObject(overridesFile(id).readText()) }.getOrDefault(JSONObject())
+        }
 
     /** Set (or clear, when [value] is null) one user override and persist it. */
     fun setOverride(id: String, key: String, value: Any?) {
-        val o = overrides(id)
-        if (value == null) o.remove(key) else o.put(key, value)
-        overridesFile(id).writeText(o.toString())
+        if (BundledWallpapers.isBundled(id)) {
+            val o = overrides(id)
+            if (value == null) o.remove(key) else o.put(key, value)
+            prefs.edit().putString("overrides_$id", o.toString()).apply()
+        } else {
+            val o = overrides(id)
+            if (value == null) o.remove(key) else o.put(key, value)
+            overridesFile(id).writeText(o.toString())
+        }
     }
 
     /** Property defaults overlaid with user overrides — what the bridge gets. */
@@ -135,7 +162,17 @@ class BundleStore(context: Context) {
      * by the web renderer, the conservative default).
      */
     fun screening(id: String): BundleScreening? =
-        runCatching { BundleScreening.fromJson(screeningFile(id).readText()) }.getOrNull()
+        if (BundledWallpapers.isBundled(id)) {
+            // Bundled wallpapers ship with the app — trusted, always "allowed".
+            BundleScreening(
+                classification = "allowed",
+                warnings = emptyList(),
+                fpsCap = 30,
+                networkBudgetPerMinute = 5
+            )
+        } else {
+            runCatching { BundleScreening.fromJson(screeningFile(id).readText()) }.getOrNull()
+        }
 
     /**
      * Per-bundle geolocation opt-in. Defaults off. Only takes effect for web

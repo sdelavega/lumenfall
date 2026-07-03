@@ -314,8 +314,28 @@ object BundleWebView {
           var native = window.aetherDeskNative;
           var suspended = $initiallySuspended;
           var _visibilityCb = null;
-          window.aetherDesk = {
-            properties: $propertiesJson,
+          var _propUpdateCb = null;
+            // Properties: the bundle reads initial values via properties[key]
+            // or properties.get(), and registers for live updates via
+            // properties.onUpdate(cb). ÆtherDesk wallpapers use onUpdate;
+            // Lively wallpapers use livelyPropertyListener. Both are supported.
+            // The raw values live in _props so onUpdate/get see the latest.
+            var _props = $propertiesJson;
+            var _propsObj = {
+              get: function() { return _props; },
+              onUpdate: function(cb) { _propUpdateCb = cb; }
+            };
+            // Proxy so `properties[key]` reads through to _props. Wallpaper JS
+            // that accesses properties.speed (not .get()) still works.
+            _propsObj = new Proxy(_propsObj, {
+              get: function(target, prop) {
+                if (prop in target) return target[prop];
+                return _props[prop];
+              },
+              ownKeys: function() { return Object.keys(_props); }
+            });
+            window.aetherDesk = {
+            properties: _propsObj,
             system: {
               fpsCap: $fpsCap,
               suspend: function () {
@@ -345,10 +365,13 @@ object BundleWebView {
             onPropertyChange: function () {},
             onVisibility: function (cb) { _visibilityCb = cb; },
             _setProperty: function (key, value) {
-              this.properties[key] = value;
+              _props[key] = value;
               try { this.onPropertyChange(key, value); } catch (e) {}
               if (typeof window.livelyPropertyListener === 'function') {
                 try { window.livelyPropertyListener(key, value); } catch (e) {}
+              }
+              if (_propUpdateCb) {
+                try { _propUpdateCb(_props); } catch (e) {}
               }
             }
           };
@@ -639,7 +662,70 @@ object BundleWebView {
             window.XMLHttpRequest = NativeXHR;
           }
 
-          // --- Geolocation ----------------------------------------------------
+          // --- navigator.geolocation compat ------------------------------------
+          // WeatherAether and other location-aware wallpapers use the standard
+          // navigator.geolocation API. Proxy it to the bridge's geolocation
+          // surface so a wallpaper doesn't need to know about aetherDesk.geo.
+          // When geolocation isn't enabled (no toggle / screening-gated), the
+          // proxy rejects with POSITION_UNAVAILABLE (code 2), matching the
+          // standard browser behavior for "permission denied or unavailable."
+          if (typeof navigator !== 'undefined' && !navigator._aetherDeskGeoPatched) {
+            var _geoWatchId = 0;
+            var _geoWatches = {};
+            try {
+              Object.defineProperty(navigator, 'geolocation', {
+                configurable: true,
+                get: function() {
+                  return {
+                    getCurrentPosition: function(success, error, opts) {
+                      var bridge = window.aetherDesk && window.aetherDesk.geolocation;
+                      if (!bridge) {
+                        if (error) error({ code: 2, message: 'Geolocation not available' });
+                        return;
+                      }
+                      opts = opts || {};
+                      bridge.getCurrentPosition({
+                        enableHighAccuracy: !!opts.enableHighAccuracy,
+                        timeoutMs: (opts.timeout | 0) || 10000
+                      }).then(function(pos) {
+                        success({ coords: {
+                          latitude: pos.latitude, longitude: pos.longitude,
+                          accuracy: pos.accuracy, altitude: pos.altitude || null,
+                          altitudeAccuracy: pos.altitudeAccuracy || null,
+                          heading: pos.bearing || null, speed: pos.speed || null
+                        }, timestamp: pos.timestamp || Date.now() });
+                      }, function(err) {
+                        if (error) error({ code: 2, message: err.message || 'unavailable' });
+                      });
+                    },
+                    watchPosition: function(success, error, opts) {
+                      var id = ++_geoWatchId;
+                      _geoWatches[id] = setInterval(function() {
+                        var bridge = window.aetherDesk && window.aetherDesk.geolocation;
+                        if (!bridge) return;
+                        bridge.getCurrentPosition({
+                          enableHighAccuracy: !!(opts && opts.enableHighAccuracy),
+                          timeoutMs: ((opts && opts.timeout) | 0) || 10000
+                        }).then(function(pos) {
+                          success({ coords: {
+                            latitude: pos.latitude, longitude: pos.longitude,
+                            accuracy: pos.accuracy
+                          }, timestamp: pos.timestamp || Date.now() });
+                        });
+                      }, 30000);
+                      return id;
+                    },
+                    clearWatch: function(id) {
+                      if (_geoWatches[id]) { clearInterval(_geoWatches[id]); delete _geoWatches[id]; }
+                    }
+                  };
+                }
+              });
+              navigator._aetherDeskGeoPatched = true;
+            } catch(e) {}
+          }
+
+          // --- Geolocation bridge ---------------------------------------------
           // Promise-based; resolves/rejects via the native aetherDeskGeo
           // surface (registered only when GeolocationPolicy passed). When that
           // surface isn't present (bundle not opted in, or screening-gated),

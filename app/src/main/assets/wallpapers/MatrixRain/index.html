@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Matrix Rain - ÆtherDesk Sample</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #000;
+            overflow: hidden;   /* wallpapers must never show scrollbars */
+            width: 100vw;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+        }
+        #fps {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            color: #0f0;
+            font-family: monospace;
+            font-size: 12px;
+            z-index: 100;
+        }
+    </style>
+</head>
+<body>
+    <!--
+        Dev-aid FPS counter. Useful for confirming the ÆtherDesk rAF shim is
+        active (you should see ~30 fps when running inside the app, not the
+        native display refresh rate). Remove or hide with display:none before
+        shipping — you don't want this visible on users' desktops.
+    -->
+    <div id="fps">FPS: --</div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        // ─────────────────────────────────────────────────────────────────────
+        // Matrix Rain — ÆtherDesk bundled wallpaper
+        //
+        // The simplest possible animated wallpaper that uses the AetherDesk
+        // property bridge. Start here if you're writing your first wallpaper.
+        //
+        // ── AetherDesk integration points used ───────────────────────────────
+        //
+        //   window.aetherDesk.properties.onUpdate(callback)
+        //     Registers a function called whenever the user changes a property
+        //     in the sidebar. Also fires once immediately on load with all
+        //     initial property values. Always guard with `if (window.aetherDesk)`
+        //     so the file opens in a plain browser for local development.
+        //
+        //   window.aetherDesk.system.fpsCap (implicit)
+        //     AetherDesk injects a bootstrap script that replaces
+        //     window.requestAnimationFrame with a throttled version enforcing
+        //     this cap. You don't read fpsCap directly — just call
+        //     requestAnimationFrame normally and the cap is applied for free.
+        //
+        // ── Properties (defined in LivelyProperties.json) ────────────────────
+        //
+        //   speed    [number, 1–10]  Fall rate multiplier. 5 = default.
+        //   density  [number, 0–1]   Per-frame reset probability for columns
+        //                            that have scrolled past the bottom.
+        //                            Lower values → longer green trails.
+        //   color    [color string]  Hex color for the rain characters.
+        //
+        // ── How the trail effect works ───────────────────────────────────────
+        //
+        //   Instead of clearing the canvas each frame, we fill it with a
+        //   near-transparent black rect (alpha 0.05). Previous characters
+        //   darken gradually over ~20 frames instead of vanishing instantly,
+        //   producing the characteristic glowing-tail look. The alpha of
+        //   `backgroundColor` controls trail length: lower → longer trails.
+        // ─────────────────────────────────────────────────────────────────────
+
+        const canvas     = document.getElementById('canvas');
+        const ctx        = canvas.getContext('2d');
+        const fpsDisplay = document.getElementById('fps');
+
+        let width, height;
+        let columns = [];   // Y position of the leading character in each column
+        let fontSize = 14;  // character height in px; also sets column width
+        let columnCount;
+        let lastTime   = performance.now();
+        let frameCount = 0;
+        let fps        = 0;
+
+        // Katakana block + hex digits — the classic Matrix character set.
+        // You can use any Unicode string here. Wider strings give more variety
+        // per column but slightly more Math.random() calls per frame.
+        const chars = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEF';
+
+        // Named so the speed formula in draw() is self-documenting.
+        const defaultSpeed   = 5;
+        const defaultDensity = 0.02;
+
+        // `config` is the single source of truth for all user-adjustable values.
+        // The property bridge writes here; draw() reads from here.
+        // Keeping rendering separate from property handling makes each easier
+        // to reason about independently.
+        let config = {
+            speed:           defaultSpeed,
+            density:         defaultDensity,
+            color:           '#0f0',
+            backgroundColor: 'rgba(0, 0, 0, 0.05)',  // low alpha = slow fade
+        };
+
+        // ── resize() ─────────────────────────────────────────────────────────
+        // Recalculates canvas dimensions and rebuilds the column array.
+        //
+        // ÆtherDesk wallpapers run across potentially multiple monitors at
+        // different resolutions, and the window can be resized at any time.
+        // Always handle 'resize' — never hard-code width or height.
+        function resize() {
+            width  = canvas.width  = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+
+            // Recompute column count. The old array is discarded because the
+            // number of columns almost certainly changed with the new width.
+            columnCount = Math.floor(width / fontSize);
+            columns = [];
+
+            for (let i = 0; i < columnCount; i++) {
+                // Stagger starting positions so columns don't all reset on the
+                // first frame, which would produce a distracting single line
+                // of characters before the stagger develops naturally.
+                columns[i] = Math.random() * height;
+            }
+        }
+
+        // ── draw() ───────────────────────────────────────────────────────────
+        // Renders a single frame. Called every tick by the rAF loop.
+        // Simple by design — if your draw() grows large, decompose it into
+        // named sub-functions: updateState(), renderBackground(), renderFX(), etc.
+        function draw() {
+            // Partial clear: dims the previous frame by `backgroundColor` alpha
+            // rather than erasing it. Characters written in previous frames
+            // gradually fade to black over ~20 frames, creating the trail.
+            // Increase alpha (toward 1.0) for shorter trails; decrease for longer.
+            ctx.fillStyle = config.backgroundColor;
+            ctx.fillRect(0, 0, width, height);
+
+            ctx.fillStyle = config.color;
+            ctx.font      = fontSize + 'px monospace';
+
+            for (let i = 0; i < columns.length; i++) {
+                const char = chars[Math.floor(Math.random() * chars.length)];
+                const x    = i * fontSize;
+                const y    = columns[i];
+
+                ctx.fillText(char, x, y);
+
+                // Reset the column when its leading character exits the bottom.
+                // The random check against `density` prevents all columns from
+                // resetting on the same frame, which would create a visible wave.
+                // At density 0.02 (~2% chance), each column resets independently.
+                if (y > height && Math.random() > config.density) {
+                    columns[i] = 0;
+                }
+
+                // Advance by one character height scaled by speed.
+                // Dividing by defaultSpeed normalises speed:5 → 1× rate,
+                // speed:10 → 2× rate, speed:1 → 0.2× rate, consistently.
+                columns[i] += fontSize * (config.speed / defaultSpeed);
+            }
+
+            // ── FPS counter ───────────────────────────────────────────────────
+            // Counts frames over a 1-second rolling window. While in development,
+            // confirm this reads ~30 when running inside AetherDesk (the rAF
+            // shim is active) vs. ~60–120 in a plain browser (uncapped).
+            frameCount++;
+            const now = performance.now();
+            if (now - lastTime >= 1000) {
+                fps        = frameCount;
+                frameCount = 0;
+                lastTime   = now;
+                fpsDisplay.textContent = 'FPS: ' + fps;
+            }
+        }
+
+        // ── animate() — the rAF loop ─────────────────────────────────────────
+        // Standard pattern. AetherDesk's injected rAF shim throttles this to
+        // fpsCap (default 30) automatically — no special handling needed here.
+        // The shim uses setTimeout internally so the JS thread idles between
+        // frames instead of waking at every display vsync.
+        function animate() {
+            draw();
+            requestAnimationFrame(animate);
+        }
+
+        window.addEventListener('resize', resize);
+
+        // ── AetherDesk property bridge ────────────────────────────────────────
+        // window.aetherDesk is injected by the host *before* this script runs,
+        // so it's safe to read synchronously here. The `if` guard lets the file
+        // load in a plain browser for development without throwing errors.
+        //
+        // onUpdate fires:
+        //   1. Once on load with the complete initial property set.
+        //   2. Again whenever the user changes any property in the sidebar.
+        //
+        // Only handle properties you care about — extra keys arrive safely.
+        //
+        // Alternative: `window.livelyPropertyListener(name, value)` receives
+        // one property at a time. onUpdate is preferred for multiple properties
+        // because it gives you the full current state, not just the delta.
+        if (window.aetherDesk) {
+            window.aetherDesk.properties.onUpdate((props) => {
+                if (props.speed   !== undefined) config.speed   = props.speed;
+                if (props.density !== undefined) config.density = props.density;
+                if (props.color   !== undefined) config.color   = props.color;
+            });
+        }
+
+        // ── Boot ──────────────────────────────────────────────────────────────
+        resize();   // set canvas dimensions and initialise columns before first frame
+        animate();  // start the rAF loop
+    </script>
+</body>
+</html>

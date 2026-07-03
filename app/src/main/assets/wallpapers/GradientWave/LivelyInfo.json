@@ -1,0 +1,9 @@
+{
+    "AppVersion": "1.0.0",
+    "Version": 1,
+    "Title": "Gradient Wave",
+    "Description": "Animated gradient wave",
+    "Author": "ÆtherDesk",
+    "Type": "web",
+    "Manifest": ["index.html"]
+}

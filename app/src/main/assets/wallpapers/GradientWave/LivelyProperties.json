@@ -1,0 +1,13 @@
+{
+    "properties": [
+        {
+            "Name": "speed",
+            "Description": "Animation speed",
+            "Type": "range",
+            "Value": 1,
+            "Min": 0.1,
+            "Max": 5,
+            "Increment": 0.1
+        }
+    ]
+}

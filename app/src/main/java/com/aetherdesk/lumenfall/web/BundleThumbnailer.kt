@@ -70,6 +70,9 @@ object BundleThumbnailer {
         meta.previewPath == null &&
             meta.entryPath != null &&
             meta.kind in setOf("web", "video", "image") &&
+            // Bundled wallpapers ship in assets, not on disk; the thumbnailer
+            // reads from disk, so skip them (they'll get blank tiles for now).
+            !com.aetherdesk.lumenfall.storage.BundledWallpapers.isBundled(meta.id) &&
             !File(store.bundleDir(meta.id), FAILED_MARKER).exists()
 
     /**

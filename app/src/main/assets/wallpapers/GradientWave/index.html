@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Gradient Wave</title>
+    <style>
+        * { margin: 0; padding: 0; }
+        body { background: #0a0a1a; overflow: hidden; width: 100vw; height: 100vh; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <canvas id="c"></canvas>
+    <script>
+        // ─────────────────────────────────────────────────────────────────────
+        // Gradient Wave — ÆtherDesk bundled wallpaper
+        //
+        // A minimal ambient wallpaper with no network calls or external deps.
+        // The simplest template for purely canvas-based animation. If MatrixRain
+        // is "hello world", this is "hello world with blending modes".
+        //
+        // ── AetherDesk integration points used ───────────────────────────────
+        //
+        //   window.aetherDesk.properties.onUpdate(callback)
+        //     See MatrixRain for full documentation of the property bridge.
+        //
+        // ── Properties (defined in LivelyProperties.json) ────────────────────
+        //
+        //   speed  [number]  Animation rate multiplier. 1.0 = default pace.
+        //
+        // ── How it works ─────────────────────────────────────────────────────
+        //
+        //   Five radial-gradient "blobs" drift around the canvas using
+        //   independent sinusoidal orbits parameterised by each blob's vx/vy
+        //   fields. Each frame the canvas is filled with a solid dark base,
+        //   then blobs are composited on top using 'screen' blend mode.
+        //
+        //   'screen' brightens where blobs overlap without blowing out to
+        //   pure white (unlike 'add'). Formula: result = 1 - (1-a)(1-b).
+        //   Two mid-brightness blobs overlapping produce a brighter but bounded
+        //   result, making colour mixing look lamp-like rather than washed out.
+        //
+        //   The blob colours are intentionally dark and muted — avoid saturated
+        //   primaries or screen blending will push overlapping zones to near-
+        //   white regardless of the individual blob alphas.
+        // ─────────────────────────────────────────────────────────────────────
+
+        const canvas = document.getElementById('c');
+        const ctx    = canvas.getContext('2d');
+
+        // Animation speed multiplier. Updated via the property bridge below.
+        let speed = 1;
+
+        // Global time accumulator, incremented each frame by (0.003 * speed).
+        // All blob orbits are driven by this single value so they stay coherent
+        // relative to each other regardless of frame timing.
+        let t = 0;
+
+        // ── Blob definitions ──────────────────────────────────────────────────
+        // Each entry describes one drifting radial-gradient light source.
+        //
+        //   x, y   Normalised home position (0–1 of canvas width/height).
+        //          The blob oscillates ±0.15 around this home each axis.
+        //   r      Radius as a fraction of min(canvas.width, canvas.height).
+        //          Larger values give softer, wider colour pools.
+        //   vx, vy Orbit frequency along each axis (fed into sin/cos as a
+        //          multiplier). Keep values small (0.006–0.013) for slow,
+        //          ambient drift. Negative values reverse orbit direction.
+        //          Using different values per blob ensures they never all peak
+        //          or trough simultaneously — motion stays organic.
+        //   color  [R, G, B] for the gradient. Keep channels low (<100) so
+        //          screen-blended overlaps stay below white saturation.
+        const blobs = [
+            { x: 0.25, y: 0.35, r: 0.45, vx:  0.012, vy:  0.008, color: [30, 60, 120] },
+            { x: 0.70, y: 0.60, r: 0.50, vx: -0.009, vy:  0.011, color: [50, 30, 100] },
+            { x: 0.50, y: 0.20, r: 0.40, vx:  0.007, vy: -0.010, color: [20, 80, 100] },
+            { x: 0.30, y: 0.75, r: 0.35, vx: -0.011, vy: -0.006, color: [60, 40, 90]  },
+            { x: 0.80, y: 0.30, r: 0.38, vx:  0.006, vy:  0.013, color: [25, 50, 80]  },
+        ];
+
+        // ── resize() ─────────────────────────────────────────────────────────
+        // Syncs canvas pixel dimensions to the current window size.
+        // Without this the canvas bitmap stays at its initial size and gets
+        // scaled (blurrily) when the window changes. Always handle 'resize'.
+        function resize() {
+            canvas.width  = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+
+        // ── draw() ───────────────────────────────────────────────────────────
+        // Renders one frame and schedules the next via requestAnimationFrame.
+        // Unlike MatrixRain this is a self-scheduling loop — draw() calls rAF
+        // at its end rather than having a separate animate() wrapper. Either
+        // pattern works; choose whichever reads more clearly for your code.
+        function draw() {
+            const w = canvas.width, h = canvas.height;
+
+            // Advance time proportionally to speed so the animation rate scales
+            // linearly with the property slider — 2× speed = 2× t per frame.
+            t += 0.003 * speed;
+
+            // Full clear each frame. We don't want trail persistence here —
+            // the soft blending between blobs is what produces the smooth look,
+            // not accumulated paint like MatrixRain's partial-alpha clear.
+            ctx.fillStyle = '#0a0a1a';
+            ctx.fillRect(0, 0, w, h);
+
+            for (var i = 0; i < blobs.length; i++) {
+                var b = blobs[i];
+
+                // Sinusoidal orbit: blob oscillates around its home position.
+                // Multiplying vx/vy by 60 converts the small decimal values to a
+                // more useful frequency range for Math.sin/cos (which operate in
+                // radians). `i * 1.8 / 2.3` adds a phase offset per blob so they
+                // don't all move in lockstep — avoids a pulsing, synchronised look.
+                var cx     = (b.x + Math.sin(t * b.vx * 60 + i * 1.8) * 0.15) * w;
+                var cy     = (b.y + Math.cos(t * b.vy * 60 + i * 2.3) * 0.15) * h;
+                var radius = b.r * Math.min(w, h);
+
+                // Three-stop radial gradient: peak opacity at centre → transparent
+                // at the edge, with a mid-stop at 0.5 to keep the blob visible
+                // over a wider area without a hard bright ring at the centre.
+                var grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+                var c    = b.color;
+                grad.addColorStop(0,   'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ', 0.6)');
+                grad.addColorStop(0.5, 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ', 0.2)');
+                grad.addColorStop(1,   'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ', 0)');
+
+                // Draw the blob using 'screen' blend mode.
+                // We fill the *entire canvas* rect rather than clipping to a circle
+                // because the gradient is already transparent at its edges — there's
+                // no visual difference, and fillRect is faster than arc+clip.
+                ctx.globalCompositeOperation = 'screen';
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, w, h);
+
+                // Reset to default after each blob. If you leave 'screen' active,
+                // subsequent fillRect/fillText calls elsewhere will also screen-
+                // composite against the canvas, which is rarely what you want.
+                ctx.globalCompositeOperation = 'source-over';
+            }
+
+            requestAnimationFrame(draw);
+        }
+
+        // ── Listeners and property bridge ─────────────────────────────────────
+        window.addEventListener('resize', resize);
+
+        // Guard with `if (window.aetherDesk)` — the property bridge doesn't
+        // exist when you open the file directly in a browser during development.
+        if (window.aetherDesk) {
+            window.aetherDesk.properties.onUpdate(function(props) {
+                if (props.speed !== undefined) speed = props.speed;
+            });
+        }
+
+        // ── Boot ──────────────────────────────────────────────────────────────
+        resize();  // set canvas dimensions before the first draw call
+        draw();    // draw() schedules its own continuation via rAF
+    </script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+{
+    "properties": [
+        {
+            "Name": "speed",
+            "Description": "Rain speed",
+            "Type": "range",
+            "Value": 5,
+            "Min": 1,
+            "Max": 20,
+            "Increment": 1
+        },
+        {
+            "Name": "density",
+            "Description": "Rain density",
+            "Type": "range",
+            "Value": 0.02,
+            "Min": 0.005,
+            "Max": 0.1,
+            "Increment": 0.005
+        },
+        {
+            "Name": "color",
+            "Description": "Rain color",
+            "Type": "color",
+            "Value": "#0f0"
+        }
+    ]
+}

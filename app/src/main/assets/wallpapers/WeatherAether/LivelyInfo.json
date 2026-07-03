@@ -1,0 +1,9 @@
+{
+    "AppVersion": "1.0.0",
+    "Version": 1,
+    "Title": "Weather Aether",
+    "Description": "Live weather wallpaper with animated sky, sun, moon phases, and forecast",
+    "Author": "ÆtherDesk",
+    "Type": "web",
+    "Manifest": ["index.html"]
+}

@@ -164,7 +164,12 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             isClickable = true
             setOnClickListener { setActiveAndPreview(meta) }
-            setOnLongClickListener { confirmDelete(meta); true }
+            // Bundled wallpapers can't be deleted — they ship with the app.
+            setOnLongClickListener {
+                if (!com.aetherdesk.lumenfall.storage.BundledWallpapers.isBundled(meta.id)) {
+                    confirmDelete(meta); true
+                } else false
+            }
         }
 
         row.addView(ImageView(this).apply {
@@ -338,8 +343,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadPreview(meta: BundleMeta) =
-        meta.previewPath?.let { rel ->
-            runCatching { BitmapFactory.decodeFile(store.fileFor(meta.id, rel).absolutePath) }.getOrNull()
+        if (com.aetherdesk.lumenfall.storage.BundledWallpapers.isBundled(meta.id)) {
+            // Bundled wallpapers have no on-disk preview; the thumbnailer will
+            // generate one from the asset (web capture) or return null.
+            null
+        } else {
+            meta.previewPath?.let { rel ->
+                runCatching { BitmapFactory.decodeFile(store.fileFor(meta.id, rel).absolutePath) }.getOrNull()
+            }
         }
 
     private fun setActiveAndPreview(meta: BundleMeta) {

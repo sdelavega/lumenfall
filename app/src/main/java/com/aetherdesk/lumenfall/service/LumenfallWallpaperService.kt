@@ -10,6 +10,7 @@ import com.aetherdesk.lumenfall.render.WallpaperRenderer
 import com.aetherdesk.lumenfall.storage.AppSettingsStore
 import com.aetherdesk.lumenfall.storage.BundleMeta
 import com.aetherdesk.lumenfall.storage.BundleStore
+import com.aetherdesk.lumenfall.storage.BundledWallpapers
 import com.aetherdesk.lumenfall.video.VideoWallpaperRenderer
 import com.aetherdesk.lumenfall.web.BundleWebView
 import com.aetherdesk.lumenfall.web.GeolocationPolicy
@@ -111,7 +112,13 @@ class LumenfallWallpaperService : WallpaperService() {
             val webBundle = active?.takeIf { it.kind == "web" && it.entryPath != null }
             val url = if (webBundle != null) {
                 Log.d(TAG, "web bundle ${webBundle.id}: ${webBundle.title}")
-                "$APP_ORIGIN/bundles/${webBundle.id}/${webBundle.entryPath}"
+                if (BundledWallpapers.isBundled(webBundle.id)) {
+                    // Bundled wallpaper: load from the assets path, not /bundles/.
+                    val folder = BundledWallpapers.folderFor(webBundle.id)
+                    "$APP_ORIGIN/assets/wallpapers/$folder/${webBundle.entryPath}"
+                } else {
+                    "$APP_ORIGIN/bundles/${webBundle.id}/${webBundle.entryPath}"
+                }
             } else {
                 Log.d(TAG, "no renderable bundle; loading default spike")
                 SPIKE_BUNDLE_URL

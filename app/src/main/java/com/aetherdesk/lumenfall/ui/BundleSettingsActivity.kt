@@ -36,6 +36,7 @@ import com.aetherdesk.lumenfall.render.PropertyBus
 import com.aetherdesk.lumenfall.storage.AppSettingsStore
 import com.aetherdesk.lumenfall.storage.BundleProperty
 import com.aetherdesk.lumenfall.storage.BundleStore
+import com.aetherdesk.lumenfall.storage.BundledWallpapers
 import com.aetherdesk.lumenfall.web.BundleWebView
 import com.aetherdesk.lumenfall.web.ContactedDomains
 import com.aetherdesk.lumenfall.web.GeolocationPolicy
@@ -377,7 +378,13 @@ class BundleSettingsActivity : AppCompatActivity() {
         // Timer control is process-global and shared with the (possibly hidden)
         // wallpaper engine — declare our need through the latch, never directly.
         WebViewTimers.setNeedsTimers(this, wv, true)
-        wv.loadUrl("${BundleWebView.APP_ORIGIN}/bundles/$bundleId/$entryPath")
+        val bundleUrl = if (BundledWallpapers.isBundled(bundleId)) {
+            val folder = BundledWallpapers.folderFor(bundleId)
+            "${BundleWebView.APP_ORIGIN}/assets/wallpapers/$folder/$entryPath"
+        } else {
+            "${BundleWebView.APP_ORIGIN}/bundles/$bundleId/$entryPath"
+        }
+        wv.loadUrl(bundleUrl)
         PropertyBus.register(this, bundleId) { key, value ->
             BundleWebView.pushPropertyDebounced(wv, key, value)
         }

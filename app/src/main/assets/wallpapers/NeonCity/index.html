@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>Neon City</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:#000}
+  canvas{display:block;width:100%;height:100%}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+'use strict';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Neon City — ÆtherDesk bundled wallpaper
+//
+// A procedurally generated cyberpunk cityscape with animated rain, vehicles,
+// wet-road reflections, fog, and flickering neon signs. Designed to run at a
+// smooth 30 fps at full 4K resolution via aggressive layer caching.
+//
+// ── AetherDesk integration points used ───────────────────────────────────────
+//
+//   window.livelyPropertyListener(name, value)
+//     Called once per property change with the key and new value. An
+//     alternative to onUpdate() that's better when individual properties
+//     trigger expensive operations (e.g. reinitialising rain on intensity
+//     change) — you get exactly the property that changed rather than the
+//     entire set. See the livelyPropertyListener function below.
+//
+// ── Properties (defined in LivelyProperties.json) ────────────────────────────
+//
+//   rainIntensity   [number, 0–100]  Drop count per screen area
+//   fogDensity      [number, 0–100]  Atmospheric haze intensity
+//   neonBrightness  [number, 0–100]  Sign and vehicle light intensity
+//   vehicleCount    [number, 0–20]   Number of moving light sources
+//
+// ── Multi-canvas layered architecture ────────────────────────────────────────
+//
+//   Rendering six separate canvas layers and compositing them each frame is
+//   faster than drawing everything to a single canvas, because most layers
+//   only need to be redrawn on slow cadences:
+//
+//   cityC   Static city background (buildings, sky, road). Rebuilt only on
+//           resize or when neonBrightness changes. Baked mid/distant signs
+//           live here too, so they cost zero per frame.
+//
+//   signC   Near-layer animated neon signs. Redrawn only when a sign flickers
+//           on or off (signsDirty flag). Between flickers: blitted in ~0.1 ms.
+//
+//   reflC   Wet-road colour smears from near signs. Refreshed every 8 frames
+//           so the shimmer looks alive without costing a full redraw every tick.
+//
+//   fogC    Fog layer at 1/4 resolution (gradients scale fine). Refreshed
+//           every 6 frames. Upscaled for free by drawImage bilinear filtering.
+//
+//   vigC    Static radial vignette darkening the screen corners. Built once
+//           on resize; costs one drawImage blit per frame.
+//
+//   canvas  The composite output canvas. Each frame: clear → blit cityC →
+//           blit signC → draw antennas → blit fogC → draw vehicles → draw
+//           rain → draw splashes → screen-composite reflC → blit vigC.
+// ─────────────────────────────────────────────────────────────────────────────
+
+
+// ── Runtime configuration ────────────────────────────────────────────────────
+// CFG holds all user-adjustable property values. livelyPropertyListener and
+// the resize() side-effects write here; every render function reads from here.
+const CFG = { rainIntensity:60, fogDensity:30, neonBrightness:100, vehicleCount:8 };
+
+// ── livelyPropertyListener ───────────────────────────────────────────────────
+// AetherDesk calls this function (if it exists) whenever the user adjusts a
+// property in the sidebar, passing the property name and new value individually.
+// This per-property callback is ideal here because each property drives a
+// different expensive operation — reinitialising rain, rebuilding the city, or
+// respawning vehicles — and we want to trigger only the affected subsystem.
+//
+// Contrast with onUpdate(), which fires with the full property set every time
+// *any* property changes. Use livelyPropertyListener when individual changes
+// are cheap to respond to; use onUpdate when you need the full context.
+function livelyPropertyListener(name, val) {
+  if (name in CFG) { CFG[name]=val; if(name==='rainIntensity')initRain(); if(name==='vehicleCount')initVehicles(); if(name==='neonBrightness'){buildCity();signsDirty=true;} }
+}
+
+
+// ── Seeded deterministic RNG ─────────────────────────────────────────────────
+// The city layout, sign positions, and building geometry are all generated
+// procedurally. Using a seeded RNG (rather than Math.random()) means the city
+// looks the same across reloads on the same display — no layout churn when
+// AetherDesk restarts. The seed is derived from screen dimensions so each
+// monitor gets a distinct but stable city.
+//
+// rng()  → float in [0, 1)
+// rR(a,b)→ float in [a, b)
+// rI(a,b)→ integer in [a, b] inclusive
+// pick(a)→ random element from array a
+let seed = Math.floor((screen.width*9301+screen.height*49297+performance.timeOrigin)%233280);
+const rng  = ()=>{ seed=(seed*9301+49297)%233280; return seed/233280; };
+const rR   = (a,b)=>a+rng()*(b-a);
+const rI   = (a,b)=>Math.floor(a+rng()*(b-a+1));
+const pick = a=>a[Math.floor(rng()*a.length)];
+const hexToRgba=(hex,a)=>{const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);return`rgba(${r},${g},${b},${a.toFixed(3)})`;};
+
+// ── Canvas layers ────────────────────────────────────────────────────────────
+// Each layer is an OffscreenCanvas-equivalent (regular <canvas> element not
+// attached to the DOM). They share dimensions with the main output canvas and
+// are blitted to it each frame in the compositing order described above.
+const canvas=document.getElementById('c'), ctx=canvas.getContext('2d');
+// Static city background — rebuilt only on resize or property change
+const cityC=document.createElement('canvas'), cX=cityC.getContext('2d');
+// Neon signs — rebuilt only when a sign flickers on/off
+const signC=document.createElement('canvas'), sCtx=signC.getContext('2d');
+// Reflections — no shadowBlur (they're at 9% alpha); cached offscreen,
+// refreshed every 4 frames so the shimmer animation stays smooth.
+const reflC=document.createElement('canvas'), rCtx=reflC.getContext('2d');
+// Fog — rendered at 1/4 resolution (radial gradients scale fine), refreshed
+// every 6 frames. drawImage upscales for free using bilinear interpolation.
+const fogC=document.createElement('canvas'), fCtx=fogC.getContext('2d');
+// Vignette — static; rebuilt only on resize
+const vigC=document.createElement('canvas'), vCtx=vigC.getContext('2d');
+
+let W,H,HZ; // horizon Y
+let signsDirty=true, fogFrame=0, reflFrame=0;
+
+
+// ── resize() ─────────────────────────────────────────────────────────────────
+// Syncs all canvas layers to the current window size, then regenerates
+// everything that depends on dimensions. Called on load and on every 'resize'
+// event. HZ (horizon Y) is derived from H — 78% of screen height separates
+// the city skyline from the foreground road.
+function resize(){
+  W=canvas.width=cityC.width=signC.width=reflC.width=vigC.width=window.innerWidth;
+  H=canvas.height=cityC.height=signC.height=reflC.height=vigC.height=window.innerHeight;
+  // Fog canvas at 1/4 resolution — gradients are smooth so this is lossless visually
+  fogC.width=Math.max(1,Math.ceil(W/4));
+  fogC.height=Math.max(1,Math.ceil(H/4));
+  HZ=Math.floor(H*0.78); // horizon at 78% — city fills top 78%, foreground just 22%
+  buildCity(); initRain(); initVehicles();
+  signsDirty=true; fogFrame=0; reflFrame=0;
+  cacheVignette();
+}
+window.addEventListener('resize',resize);
+
+const NEONS=['#ff1a5e','#ff6a00','#ffe600','#00ffe0','#00aaff','#bb00ff','#ff00bb','#44ff00','#ff4466','#00ffaa'];
+
+let signs=[], antennas=[];
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── buildCity() ──────────────────────────────────────────────────────────────
+// Procedurally generates the complete static city background and paints it
+// onto cityC. Called only on resize or neonBrightness change — never per frame.
+//
+// Three building layers are drawn back-to-front (painter's algorithm):
+//   Layer 0: distant — shortest buildings, darkest, most depth haze
+//   Layer 1: mid     — medium, some baked signs
+//   Layer 2: near    — tallest, most windows, pushSign() for animated signs
+//
+// Signs on layers 0 and 1 are baked directly into cityC with bakeSign() so
+// they contribute zero per-frame cost. Near-layer signs are pushed into the
+// signs[] array so they can flicker and animate independently via signC.
+function buildCity(){
+  signs=[]; antennas=[];
+  const c=cX; c.clearRect(0,0,W,H);
+
+  // Sky
+  const sky=c.createLinearGradient(0,0,0,HZ);
+  sky.addColorStop(0,'#020518'); sky.addColorStop(0.65,'#081430'); sky.addColorStop(1,'#0c1a38');
+  c.fillStyle=sky; c.fillRect(0,0,W,HZ);
+
+  // Stars
+  for(let i=0;i<200;i++){
+    c.fillStyle=`rgba(200,215,255,${0.15+rng()*0.75})`;
+    c.beginPath(); c.arc(rng()*W,rng()*HZ*0.9,rR(0.2,0.75),0,Math.PI*2); c.fill();
+  }
+
+  // Moon
+  const mx=rR(W*0.12,W*0.82),my=rR(HZ*0.06,HZ*0.22),mr=rR(22,40);
+  const mg=c.createRadialGradient(mx,my,0,mx,my,mr*3.5);
+  mg.addColorStop(0,'rgba(255,248,220,0.15)'); mg.addColorStop(0.35,'rgba(255,242,195,0.06)'); mg.addColorStop(1,'rgba(0,0,0,0)');
+  c.fillStyle=mg; c.fillRect(mx-mr*4,my-mr*4,mr*8,mr*8);
+  c.beginPath(); c.arc(mx,my,mr,0,Math.PI*2); c.fillStyle='rgba(255,252,230,0.09)'; c.fill();
+
+  // ── Three building layers back→front ─────────────────────────────────
+  const LAYERS=[
+    {minH:0.52,maxH:0.80,minW:26,maxW:68},   // 0: distant
+    {minH:0.28,maxH:0.54,minW:46,maxW:112},  // 1: mid
+    {minH:0.13,maxH:0.36,minW:62,maxW:165},  // 2: near
+  ];
+
+  for(let li=0;li<3;li++){
+    const L=LAYERS[li];
+    const bldgs=[];
+    let x=rR(-50,0);
+    while(x<W+80){
+      const bw=rR(L.minW,L.maxW), bh=rR(L.minH,L.maxH)*HZ;
+      bldgs.push({x,y:HZ-bh,w:bw,h:bh});
+      x+=bw+rR(2,5);
+    }
+
+    // Silhouette path — solid, no gaps
+    c.beginPath(); c.moveTo(0,HZ);
+    for(const b of bldgs){ c.lineTo(b.x,HZ); c.lineTo(b.x,b.y); c.lineTo(b.x+b.w,b.y); c.lineTo(b.x+b.w,HZ); }
+    c.lineTo(W,HZ); c.closePath();
+    c.fillStyle=`hsl(225,${[10,12,15][li]}%,${[4,6,8][li]}%)`; c.fill();
+
+    for(const b of bldgs){
+      const fL=[5,7,10][li]+rI(0,3);
+      c.fillStyle=`hsl(${rI(218,238)},${rI(10,18)}%,${fL}%)`; c.fillRect(b.x+1,b.y,b.w-2,b.h);
+
+      if(li===0){ c.fillStyle='rgba(10,20,65,0.55)'; c.fillRect(b.x,b.y,b.w,b.h); }
+      else if(li===1){ c.fillStyle='rgba(6,12,42,0.20)'; c.fillRect(b.x,b.y,b.w,b.h); }
+
+      drawRooftop(c,b.x,b.y,b.w,b.h,li,b.h>HZ*0.36,li===0?0.20:1.0);
+      drawWindows(c,b.x,b.y,b.w,b.h,li);
+      if(li===2&&rng()<0.80) pushSign(b.x,b.y,b.w,b.h,1.0);
+      if(li===1&&rng()<0.45) bakeSign(cX,b.x,b.y,b.w,b.h,1.0);
+      if(li===0&&rng()<0.25) bakeSign(cX,b.x,b.y,b.w,b.h,0.18);
+    }
+  }
+
+  // Atmospheric depth — haze thickens toward tops of distant buildings
+  const atm=c.createLinearGradient(0,0,0,HZ*0.85);
+  atm.addColorStop(0,'rgba(10,16,52,0.32)'); atm.addColorStop(0.75,'rgba(8,14,44,0.07)'); atm.addColorStop(1,'rgba(0,0,0,0)');
+  c.fillStyle=atm; c.fillRect(0,0,W,HZ);
+
+  // ── Street/ground ────────────────────────────────────────────────────
+  const sg=c.createLinearGradient(0,HZ,0,H);
+  sg.addColorStop(0,'#060810'); sg.addColorStop(0.35,'#04060c'); sg.addColorStop(1,'#020306');
+  c.fillStyle=sg; c.fillRect(0,HZ,W,H-HZ);
+
+  // Horizon atmosphere glow
+  const hg=c.createLinearGradient(0,HZ-20,0,HZ+40);
+  hg.addColorStop(0,'rgba(0,0,0,0)'); hg.addColorStop(0.4,'rgba(12,30,85,0.28)'); hg.addColorStop(1,'rgba(0,0,0,0)');
+  c.fillStyle=hg; c.fillRect(0,HZ-20,W,60);
+
+  // Wet road sheen
+  for(let i=0;i<6;i++){
+    const ry=HZ+rR(4,(H-HZ)*0.6), rh=rR(0.8,2);
+    const rg=c.createLinearGradient(0,0,W,0);
+    rg.addColorStop(0,'rgba(0,0,0,0)');
+    rg.addColorStop(0.25,`rgba(16,40,85,${rR(0.03,0.08)})`);
+    rg.addColorStop(0.5,`rgba(20,55,110,${rR(0.05,0.11)})`);
+    rg.addColorStop(0.75,`rgba(16,40,85,${rR(0.03,0.08)})`);
+    rg.addColorStop(1,'rgba(0,0,0,0)');
+    c.fillStyle=rg; c.fillRect(0,ry,W,rh);
+  }
+
+  // ── Foreground: thin dark ground strip only ───────────────────────────
+  const groundH=H*0.05;
+  const grd=c.createLinearGradient(0,H-groundH,0,H);
+  grd.addColorStop(0,'rgba(4,6,14,0.9)'); grd.addColorStop(1,'rgba(2,3,8,1)');
+  c.fillStyle=grd; c.fillRect(0,H-groundH,W,groundH);
+}
+
+// ── Rooftop ───────────────────────────────────────────────────────────────────
+
+// ── drawRooftop() ────────────────────────────────────────────────────────────
+// Adds a random rooftop detail (parapet ledge, mechanical penthouse, or
+// vertical antenna) to a building. Tall buildings on inner layers get antenna
+// beacons pushed into the antennas[] array for per-frame blinking in
+// drawAntennas(). `antDim` scales beacon brightness — distant antennas are
+// dimmer than near ones.
+function drawRooftop(c,bx,by,bw,bh,layer,isTall,antDim=1.0){
+  const t=rI(0,2);
+  if(t===0){ c.fillStyle='rgba(70,95,175,0.14)'; c.fillRect(bx,by-2,bw,2); }
+  else if(t===1){
+    const tw=rR(bw*0.14,bw*0.38),th=rR(7,Math.min(26,bh*0.22));
+    const tx=bx+rR(4,Math.max(5,bw-tw-4));
+    c.fillStyle=`hsl(225,${rI(10,18)}%,${rI(5,9)}%)`; c.fillRect(tx,by-th,tw,th);
+    if(isTall&&rng()<0.68) antennas.push({x:tx+tw/2,y:by-th-3,phase:rng()*Math.PI*2,dim:antDim});
+  } else {
+    const tw=rR(2,4),th=rR(8,28),tx=bx+bw/2-tw/2;
+    c.fillStyle='rgba(55,80,145,0.45)'; c.fillRect(tx,by-th,tw,th);
+    if(isTall) antennas.push({x:tx+tw/2,y:by-th-3,phase:rng()*Math.PI*2,dim:antDim});
+  }
+}
+
+// ── Windows — sparse, mostly dark ────────────────────────────────────────────
+
+// ── drawWindows() ────────────────────────────────────────────────────────────
+// Scatters lit windows across a building face using a grid with random
+// spacing and density. Near-layer buildings (layer 2) have higher density
+// and brighter windows. Window colours alternate between warm amber (offices)
+// and cool blue-white (commercial/tech) at roughly 82%/18%.
+function drawWindows(c,bx,by,bw,bh,layer){
+  const density=[0.12,0.20,0.30][layer];
+  const ww=rR(2,3.5),wh=rR(2,3.5);
+  const gx=rR(5,11),gy=rR(5,10);
+  const sx=bx+rR(4,8),sy=by+rR(5,10);
+  const maxL=[30,45,58][layer];
+  for(let wy=sy;wy<by+bh-wh-4;wy+=wh+gy){
+    for(let wx=sx;wx<bx+bw-ww-4;wx+=ww+gx){
+      if(rng()>density) continue;
+      c.fillStyle=rng()<0.82
+        ?`hsl(${rI(36,54)},${rI(42,68)}%,${rI(16,maxL)}%)`
+        :`hsl(${rI(200,225)},${rI(28,52)}%,${rI(18,maxL*0.85)}%)`;
+      c.fillRect(wx,wy,ww,wh);
+    }
+  }
+}
+
+// ── Neon signs ────────────────────────────────────────────────────────────────
+
+// ── pushSign() ───────────────────────────────────────────────────────────────
+// Creates an animated neon sign for a near-layer building and adds it to the
+// signs[] array. Signs can optionally have a second colour tube below the
+// first. Each sign is pre-rendered to its own mini canvas (with shadowBlur
+// glow baked in) so per-frame blitting is a simple drawImage — no GPU blur
+// cost at runtime.
+//
+// Signs added via pushSign() are drawn to signC each frame (or whenever the
+// flicker state changes) and can turn off and on. This is distinct from
+// bakeSign(), which draws signs directly into cityC as static pixels.
+//
+// `dimScale` allows mid-layer signs to appear at reduced brightness even
+// though they're technically "animated" (used when a near building partially
+// occludes a mid-layer building).
+function pushSign(bx,by,bw,bh,dimScale=1.0){
+  const color=pick(NEONS);
+  const margin=10, maxW=bw-margin*2;
+  if(maxW<14) return;
+  const sw=rR(14,Math.min(48,maxW));
+  const x=bx+margin+rng()*Math.max(0,maxW-sw);
+  const minY=by+Math.max(12,bh*0.20), maxY=by+bh*0.68;
+  if(maxY-minY<6) return;
+  const y=rR(minY,maxY);
+  const h=rR(2.5,4.0);
+  const color2=rng()<0.38?pick(NEONS):null;
+  const gap=rR(3,6), w2sc=rR(0.55,0.88);
+  const totalH=color2?h+gap+h:h;
+  const safeY=Math.min(y,by+bh-totalH-10);
+  if(safeY<by+8) return;
+  // Pre-render sign to offscreen canvas — glow (shadowBlur) is rasterised here,
+  // so blitting it with a canvas clip is pixel-exact with no shadow bleed.
+  const pad=Math.ceil(h*7)+2;
+  const img=document.createElement('canvas');
+  img.width=Math.ceil(sw)+pad*2; img.height=Math.ceil(totalH)+pad*2;
+  const ic=img.getContext('2d');
+  drawNeonTube(ic,pad,pad,sw,h,color,1.0,1.0);
+  if(color2) drawNeonTube(ic,pad,pad+h+gap,sw*w2sc,h,color2,0.82,1.0);
+  signs.push({
+    img, imgX:x-pad, imgY:safeY-pad,
+    x, y:safeY, w:sw, h, color, color2, gap, w2sc,
+    glow:rR(4,10), flicker:rng()<0.18, phase:rng()*Math.PI*2, _off:false, dim:dimScale,
+    clip:{x:bx, y:by, w:bw, h:bh},
+  });
+}
+
+// Bake a sign directly into ctx (used for mid/distant layers so near-layer
+// building fills naturally occlude them, preventing cross-building bleed).
+// Unlike pushSign, produces no signs[] entry — static, no flicker.
+
+// ── bakeSign() ───────────────────────────────────────────────────────────────
+// Draws a non-animated neon sign directly into the provided canvas context
+// (always cityC). Unlike pushSign(), baked signs produce no signs[] entry —
+// they're static pixels that cost nothing per frame.
+//
+// Used for mid-layer and distant-layer buildings where animation is not worth
+// the per-frame cost. The 9-arg drawImage call clips the sign to the building
+// bounds to prevent glow bleeding onto adjacent buildings.
+function bakeSign(ctx,bx,by,bw,bh,dimScale=1.0){
+  const color=pick(NEONS);
+  const margin=10, maxW=bw-margin*2;
+  if(maxW<14) return;
+  const sw=rR(14,Math.min(48,maxW));
+  const x=bx+margin+rng()*Math.max(0,maxW-sw);
+  const minY=by+Math.max(12,bh*0.20), maxY=by+bh*0.68;
+  if(maxY-minY<6) return;
+  const y=rR(minY,maxY);
+  const h=rR(2.5,4.0);
+  const color2=rng()<0.38?pick(NEONS):null;
+  const gap=rR(3,6), w2sc=rR(0.55,0.88);
+  const totalH=color2?h+gap+h:h;
+  const safeY=Math.min(y,by+bh-totalH-10);
+  if(safeY<by+8) return;
+  const pad=Math.ceil(h*7)+2;
+  const img=document.createElement('canvas');
+  img.width=Math.ceil(sw)+pad*2; img.height=Math.ceil(totalH)+pad*2;
+  const ic=img.getContext('2d');
+  drawNeonTube(ic,pad,pad,sw,h,color,1.0,1.0);
+  if(color2) drawNeonTube(ic,pad,pad+h+gap,sw*w2sc,h,color2,0.82,1.0);
+  const imgX=x-pad, imgY=safeY-pad;
+  const sx=Math.max(0,bx-imgX), sy=Math.max(0,by-imgY);
+  const ex=Math.min(img.width,bx+bw-imgX), ey=Math.min(img.height,by+bh-imgY);
+  if(ex<=sx||ey<=sy) return;
+  ctx.save(); ctx.globalAlpha=dimScale*(CFG.neonBrightness/80);
+  ctx.drawImage(img, sx,sy,ex-sx,ey-sy, imgX+sx,imgY+sy,ex-sx,ey-sy);
+  ctx.restore();
+}
+
+// ── Flicker ───────────────────────────────────────────────────────────────────
+
+// ── Sign flicker system ───────────────────────────────────────────────────────
+// Signs with `flicker: true` toggle on/off at random intervals. flickerT maps
+// sign index → timestamp of the next state change. When the time is up the
+// sign's `_off` flag flips and signsDirty is set, triggering a redraw of signC.
+// Off-state signs render at 8% alpha rather than 0% — completely dark signs
+// look broken; a faint glow reads as a failing tube.
+const flickerT={};
+function updateFlicker(t){
+  for(let i=0;i<signs.length;i++){
+    const s=signs[i]; if(!s.flicker) continue;
+    if(!flickerT[i]) flickerT[i]=t+rR(800,5000);
+    if(t>flickerT[i]){ s._off=!s._off; flickerT[i]=t+(s._off?rR(40,200):rR(400,6000)); signsDirty=true; }
+  }
+}
+const signAlpha=s=>(s.flicker&&s._off)?0.08:1.0;
+
+// ── Neon tube draw ────────────────────────────────────────────────────────────
+
+// ── drawNeonTube() ───────────────────────────────────────────────────────────
+// Draws a single neon tube (horizontal line segment with glow) into ctx.
+// Three passes achieve the characteristic look:
+//   Pass 1: wide, low-alpha stroke with large shadowBlur — outer bloom/haze
+//   Pass 2: medium stroke, tighter shadowBlur — the tube glass body
+//   Pass 3: thin white stroke with minimal shadowBlur — bright hot-spot core
+//
+// Called only when pre-rendering to a sign's off-screen canvas — never on the
+// main canvas directly. All shadowBlur cost is paid once at build time.
+// `nb` is the neonBrightness normaliser (CFG.neonBrightness / 80).
+function drawNeonTube(ctx,x,y,w,h,color,alpha,nb){
+  if(alpha<0.02||w<4) return;
+  ctx.save(); ctx.lineCap='round';
+  const cy=y+h/2, x1=x+h*0.5, x2=x+w-h*0.5;
+  if(x2<=x1){ctx.restore();return;}
+  ctx.strokeStyle=color; ctx.shadowColor=color;
+  ctx.globalAlpha=alpha*0.18*nb; ctx.shadowBlur=h*5; ctx.lineWidth=h*3.0;
+  ctx.beginPath(); ctx.moveTo(x1,cy); ctx.lineTo(x2,cy); ctx.stroke();
+  ctx.globalAlpha=alpha*0.78*nb; ctx.shadowBlur=h*2.0; ctx.lineWidth=h*0.90;
+  ctx.beginPath(); ctx.moveTo(x1,cy); ctx.lineTo(x2,cy); ctx.stroke();
+  ctx.globalAlpha=alpha*0.88*nb; ctx.strokeStyle='#fff'; ctx.shadowColor='#fff'; ctx.shadowBlur=h*0.55; ctx.lineWidth=Math.max(0.7,h*0.20);
+  ctx.beginPath(); ctx.moveTo(x1,cy); ctx.lineTo(x2,cy); ctx.stroke();
+  ctx.restore();
+}
+function drawSign(ctx,s,alpha){
+  const nb=CFG.neonBrightness/80*(s.dim??1.0);
+  const {x:bx,y:by,w:bw,h:bh}=s.clip;
+  // 9-arg drawImage crops to building bounds without canvas clip state.
+  // Canvas clip is unreliable for containment of pre-rendered shadowBlur pixels;
+  // explicit source/dest rect intersection is not.
+  const sx=Math.max(0,bx-s.imgX), sy=Math.max(0,by-s.imgY);
+  const ex=Math.min(s.img.width,bx+bw-s.imgX), ey=Math.min(s.img.height,by+bh-s.imgY);
+  if(ex<=sx||ey<=sy) return;
+  ctx.save(); ctx.globalAlpha=alpha*nb;
+  ctx.drawImage(s.img, sx,sy,ex-sx,ey-sy, s.imgX+sx,s.imgY+sy,ex-sx,ey-sy);
+  ctx.restore();
+}
+
+// ── Antennas ──────────────────────────────────────────────────────────────────
+
+// ── drawAntennas() ───────────────────────────────────────────────────────────
+// Draws aviation-hazard beacon lights on tall buildings. Each antenna blinks
+// at its own phase using sin(t * 0.0018 + phase) — slow enough to look like
+// real beacons (~0.5 Hz) rather than fast animation. Only draws when sin > 0.45
+// so each beacon spends most of its time off. No shadowBlur — a 2px dot at
+// typical wallpaper viewing distance needs none, saving ~antenna_count blur
+// passes per frame.
+function drawAntennas(ctx,t){
+  ctx.save();
+  for(const a of antennas){
+    const p=Math.sin(t*0.0018+a.phase); if(p<0.45) continue;
+    const dim=a.dim??1.0;
+    // No shadowBlur — 2px dot at viewing distance needs none; saves ~20 blur passes/frame.
+    ctx.globalAlpha=(0.65+0.28*p)*dim; ctx.fillStyle='#ff2222';
+    ctx.beginPath(); ctx.arc(a.x,a.y,2.2*(0.5+0.5*dim),0,Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ── Rain — all drops batched into a single stroke call ────────────────────────
+
+// ── Rain system ───────────────────────────────────────────────────────────────
+// Simulates rainfall as a pool of drop objects. Each drop has a position,
+// speed, length, and horizontal drift. initRain() rebuilds the pool when
+// rainIntensity changes. The drop count scales proportionally to screen area
+// so intensity feels consistent across different monitor sizes.
+//
+// Performance: all drops are batched into a single canvas path and stroked
+// in one call — one GPU stroke for ~200 drops instead of 200 individual calls.
+// Per-drop alpha variation was removed in favour of a single mid-value (0.22);
+// the visual difference is imperceptible at this scale.
+let rain=[];
+function initRain(){
+  rain=[];
+  const n=Math.floor(CFG.rainIntensity*(W/1920)*(H/1080)*2.4);
+  for(let i=0;i<n;i++) rain.push(mkDrop(true));
+}
+function mkDrop(rand){return{x:rng()*W,y:rand?rng()*H:-rR(5,20),spd:rR(15,32),len:rR(8,20),drift:rR(-0.3,1.0)};}
+function updateRain(){const s=dt/33.33;for(const d of rain){d.y+=d.spd*s;d.x+=d.drift*s;if(d.y>H+d.len)Object.assign(d,mkDrop(false));}}
+function drawRain(ctx){
+  // All drops share one path → one GPU stroke call instead of ~180 individual calls.
+  // Per-drop alpha variation removed (was 0.10–0.36); 0.22 is the midpoint.
+  ctx.save(); ctx.strokeStyle='rgba(155,200,238,0.22)'; ctx.lineWidth=0.52;
+  ctx.beginPath();
+  for(const d of rain){ ctx.moveTo(d.x,d.y); ctx.lineTo(d.x+d.drift*0.6,d.y+d.len); }
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ── Splashes ──────────────────────────────────────────────────────────────────
+
+// ── Rain splash system ────────────────────────────────────────────────────────
+// Short-lived elliptical ripples spawned randomly in the road area each frame.
+// Occasionally a ripple uses a neon colour (22% chance) to simulate sign light
+// reflecting in a puddle. shadowBlur is omitted — the ellipses are small and
+// semi-transparent, glow would be wasted.
+let splashes=[];
+function spawnSplash(){
+  if(rng()>0.07||!CFG.rainIntensity) return;
+  splashes.push({x:rng()*W,y:HZ+rR(4,(H-HZ)*0.65),r:0,max:rR(3,10),a:rR(0.22,0.55),color:rng()<0.22?pick(NEONS):'rgba(115,165,210,1)'});
+}
+function drawSplashes(ctx){
+  ctx.save();
+  // shadowBlur removed — tiny ellipses at <0.55 alpha don't need GPU blur
+  for(let i=splashes.length-1;i>=0;i--){
+    const s=splashes[i]; ctx.globalAlpha=s.a*(1-s.r/s.max);
+    ctx.strokeStyle=s.color; ctx.lineWidth=0.65;
+    ctx.beginPath(); ctx.ellipse(s.x,s.y,s.r*2.1,s.r*0.38,0,0,Math.PI*2); ctx.stroke();
+    s.r+=0.55*(dt/33.33); if(s.r>=s.max) splashes.splice(i,1);
+  }
+  ctx.restore();
+}
+
+// ── Vehicles ──────────────────────────────────────────────────────────────────
+
+// ── Vehicle system ────────────────────────────────────────────────────────────
+// Moving light sources that simulate cars and motorcycles on the road. Each
+// vehicle has a pre-rendered trail sprite (colour→transparent gradient in the
+// direction of travel) and a pre-rendered head sprite (white dot + coloured
+// glow). Both are built once in mkVehicle() via off-screen canvases, so per-
+// frame rendering is two drawImage blits with no shadowBlur or gradient
+// allocation at runtime. Vehicles that leave the screen are recycled via
+// mkVehicle(false) — spawned just off the appropriate edge, not at a random
+// position — to avoid teleporting.
+let vehicles=[];
+function initVehicles(){vehicles=[];for(let i=0;i<CFG.vehicleCount;i++) vehicles.push(mkVehicle(true));}
+function mkVehicle(rand){
+  const dir=rng()<0.5?1:-1, spd=rR(0.5,2.2)*dir;
+  const size=rR(1.2,2.8), color=pick(NEONS), tlen=Math.ceil(rR(20,58));
+  // Pre-render trail (color->transparent in direction of travel) — eliminates
+  // createLinearGradient allocation each frame.
+  const lw=Math.max(1,size*0.5);
+  const ts=document.createElement('canvas');
+  ts.width=tlen; ts.height=Math.ceil(lw)+2;
+  const tx=ts.getContext('2d');
+  const tg=tx.createLinearGradient(dir>0?0:tlen,0,dir>0?tlen:0,0);
+  tg.addColorStop(0,'rgba(0,0,0,0)'); tg.addColorStop(1,color);
+  tx.fillStyle=tg; tx.fillRect(0,0,tlen,ts.height);
+  // Pre-render head (white dot + colored glow) — eliminates per-frame shadowBlur.
+  const pad=Math.ceil(size*12), hw=pad*2;
+  const hs=document.createElement('canvas'); hs.width=hs.height=hw;
+  const hx=hs.getContext('2d');
+  hx.shadowColor=color; hx.shadowBlur=size*3; hx.fillStyle='#fff';
+  hx.beginPath(); hx.arc(pad,pad,size,0,Math.PI*2); hx.fill();
+  return{x:rand?rng()*W:(dir>0?-80:W+80),y:rR(H*0.04,HZ*0.72),
+         spd,dir,size,color,tlen,trailH:ts.height,trailImg:ts,headImg:hs,
+         hpadX:pad,hpadY:pad};
+}
+function updateVehicles(){const s=dt/33.33;
+  for(let i=0;i<vehicles.length;i++){
+    const v=vehicles[i]; v.x+=v.spd*s;
+    if(v.dir>0&&v.x>W+v.tlen+20) vehicles[i]=mkVehicle(false);
+    if(v.dir<0&&v.x<-v.tlen-20)  vehicles[i]=mkVehicle(false);
+  }
+}
+function drawVehicles(ctx){
+  ctx.save(); const nb=CFG.neonBrightness/80;
+  for(const v of vehicles){
+    // Trail: blit pre-rendered sprite — no per-frame gradient or shadowBlur.
+    // Use raw v.x (sub-pixel) so slow cars glide smoothly via bilinear interpolation.
+    // v.y is fixed so rounding it is fine (avoids sub-pixel vertical shimmer).
+    const ry=Math.round(v.y), ty=ry-Math.ceil(v.trailH/2);
+    ctx.globalAlpha=0.45*nb;
+    ctx.drawImage(v.trailImg, v.dir>0 ? v.x-v.tlen : v.x, ty);
+    // Head: blit pre-rendered sprite (white dot + colored glow).
+    ctx.globalAlpha=0.88*nb;
+    ctx.drawImage(v.headImg, v.x-v.hpadX, ry-v.hpadY);
+  }
+  ctx.restore();
+}
+
+// ── Fog — rendered at 1/4 resolution, updated every 6 frames ─────────────────
+
+// ── cacheFog() ────────────────────────────────────────────────────────────────
+// Renders three slowly drifting radial-gradient fog banks and a horizon-haze
+// strip into fogC at 1/4 resolution. Called every 6 frames. The upscale from
+// fogC to the main canvas is handled by drawImage with bilinear interpolation,
+// which is visually lossless for soft gradients and free on all GPUs.
+// Fog opacity is proportional to CFG.fogDensity; skipped entirely below 1%.
+function cacheFog(t){
+  const d=CFG.fogDensity/100; if(d<0.01) return;
+  const fw=fogC.width, fh=fogC.height, hz=HZ/4;
+  fCtx.clearRect(0,0,fw,fh);
+  for(let i=0;i<3;i++){
+    const ox=((t*(0.011+i*0.005)+i*fw*0.38)%(fw*1.6))-fw*0.2;
+    const fg=fCtx.createRadialGradient(ox,hz*0.82,0,ox,hz*0.82,fw*0.52);
+    fg.addColorStop(0,`rgba(5,12,32,${d*0.17})`); fg.addColorStop(0.6,`rgba(3,8,20,${d*0.08})`); fg.addColorStop(1,'rgba(0,0,0,0)');
+    fCtx.fillStyle=fg; fCtx.fillRect(0,0,fw,fh);
+  }
+  const gf=fCtx.createLinearGradient(0,hz,0,hz+fh*0.18);
+  gf.addColorStop(0,`rgba(6,14,36,${d*0.42})`); gf.addColorStop(1,'rgba(0,0,0,0)');
+  fCtx.fillStyle=gf; fCtx.fillRect(0,hz,fw,fh*0.18);
+}
+
+// ── Neon reflections — vertical puddle smears on the wet road surface,
+//    cached to reflC and refreshed every 8 frames for shimmer ────────────────
+
+// ── cacheReflections() ───────────────────────────────────────────────────────
+// Renders vertical colour smears below each animated neon sign into reflC,
+// simulating the wet-road puddle effect. Two overlapping smears per sign (a
+// wide primary and a narrower secondary) give the reflection depth without
+// lateral drift — that's what makes it read as a puddle rather than a shadow.
+//
+// The reflC layer is composited onto the main canvas using 'screen' blend mode,
+// so it brightens the road surface rather than painting over it. Updated every
+// 8 frames; the slow cadence produces a gentle shimmer that looks intentional.
+function cacheReflections(t){
+  rCtx.clearRect(0,0,W,H);
+  rCtx.save();
+  const nb=CFG.neonBrightness/80;
+  for(const s of signs){
+    const baseA=signAlpha(s)*0.10*nb; if(baseA<0.01) continue;
+    const cx=s.x+s.w/2;
+    const smearW=s.w, smearH=Math.min((H-HZ)*0.72, 35+s.w*0.6);
+    const yTop=HZ+3;
+    // Primary smear: same width as sign, fades from horizon down
+    const g=rCtx.createLinearGradient(0,yTop,0,yTop+smearH);
+    g.addColorStop(0,hexToRgba(s.color,baseA*1.4));
+    g.addColorStop(0.45,hexToRgba(s.color,baseA*0.65));
+    g.addColorStop(1,hexToRgba(s.color,0));
+    rCtx.fillStyle=g; rCtx.fillRect(cx-smearW/2,yTop,smearW,smearH);
+    // Secondary smear: slightly inset, shorter — adds wet-road depth without lateral drift
+    const g2=rCtx.createLinearGradient(0,yTop,0,yTop+smearH*0.52);
+    g2.addColorStop(0,hexToRgba(s.color,baseA*0.75));
+    g2.addColorStop(1,hexToRgba(s.color,0));
+    rCtx.fillStyle=g2; rCtx.fillRect(cx-smearW*0.35,yTop,smearW*0.7,smearH*0.52);
+  }
+  rCtx.restore();
+}
+
+// ── Cached layers ─────────────────────────────────────────────────────────────
+
+// ── cacheVignette() ──────────────────────────────────────────────────────────
+// Builds a static radial vignette (dark at corners, transparent at centre)
+// into vigC. Drawn as the very last layer each frame to push the eye toward
+// the centre of the scene. Built once on resize, blitted per frame.
+function cacheVignette(){
+  const c=vCtx; c.clearRect(0,0,W,H);
+  const vg=c.createRadialGradient(W*.5,H*.5,H*.2,W*.5,H*.5,H*.88);
+  vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,0.4)');
+  c.fillStyle=vg; c.fillRect(0,0,W,H);
+}
+
+// ── redrawSigns() ────────────────────────────────────────────────────────────
+// Repaints all animated signs onto signC. Only called when signsDirty is true
+// (a flicker state changed). Between flicker events, the last-painted signC
+// is blitted unchanged — a full sign layer redraw for N signs costs as little
+// as one drawImage call per frame when nothing is flickering.
+function redrawSigns(){
+  const c=sCtx; c.clearRect(0,0,W,H);
+  for(const s of signs) drawSign(c,s,signAlpha(s));
+  signsDirty=false;
+}
+
+// dt: milliseconds since last rendered frame, capped to avoid big jumps
+// on first frame or after a tab pause. Initialized to one 30fps frame.
+// The rAF throttle shim (injected by ÆtherDesk) already enforces the fps
+// cap, so we don't gate here — we just measure the actual elapsed time and
+// scale all physics by it so motion stays smooth regardless of timing jitter.
+// dt is low-pass filtered (α=0.15) to damp setTimeout timing jitter from the
+// rAF shim. A raw spike to 40ms smooths to ~34ms; converges back in ~4 frames.
+// Rain doesn't visibly stutter because no individual drop is tracked; cars do.
+
+// ── Frame loop ────────────────────────────────────────────────────────────────
+// `dt` is the elapsed time in ms since the last frame, used to scale all
+// physics (rain drop speed, vehicle speed, splash growth) so motion stays
+// consistent regardless of actual frame rate. Capped at 100ms to prevent
+// physics explosions after a tab pause or GC stall.
+//
+// dt is low-pass filtered (α = 0.15) to damp the timing jitter introduced by
+// AetherDesk's setTimeout-based rAF shim. A raw spike to 40ms smooths to
+// ~34ms and converges back in ~4 frames. Rain is immune to jitter because no
+// individual drop is tracked across frames; vehicles benefit most from smoothing.
+//
+// Cached layers are refreshed on fixed cadences:
+//   fog:         every 6 frames
+//   reflections: every 8 frames (or immediately when signsDirty)
+//   signs:       when signsDirty (flicker state changed)
+// All other layers (city, vignette) are static until resize.
+let last=0, dt=1000/30;
+function frame(t){
+  requestAnimationFrame(frame);
+  if(last) dt = dt*0.85 + Math.min(t-last,100)*0.15;
+  last=t;
+  updateRain(); updateVehicles(); updateFlicker(t); spawnSplash();
+
+  // Refresh cached layers on their respective cadences
+  if(fogFrame++ % 6 === 0) cacheFog(t);
+  if(reflFrame++ % 8 === 0 || signsDirty) cacheReflections(t);
+
+  const c=ctx; c.clearRect(0,0,W,H);
+  c.drawImage(cityC,0,0);
+  if(signsDirty) redrawSigns();
+  c.drawImage(signC,0,0);
+  drawAntennas(c,t);
+  // Fog drawn at full size from low-res canvas — bilinear scaling is free and looks good
+  if(CFG.fogDensity>1) c.drawImage(fogC,0,0,W,H);
+  drawVehicles(c);
+  drawRain(c);
+  drawSplashes(c);
+  // Reflections screen-composited from cache — same visual as drawing directly with screen mode
+  c.save(); c.globalCompositeOperation='screen'; c.drawImage(reflC,0,0); c.restore();
+  c.drawImage(vigC,0,0);
+}
+
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
