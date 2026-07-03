@@ -129,6 +129,50 @@ load time, not a live-reacting daemon, consistent with how import
 screening's limits already work. The UI says as much ("applies next time a
 wallpaper loads") so this isn't a surprise.
 
+Watchdog and failure recovery (DONE, 2026-07-03 — ported from ÆtherDesk's
+WatchdogTimer):
+
+- `web/WallpaperWatchdog` fires once if 30s pass with no activity, poked by
+  the bridge's existing 2s tick telemetry and page-load events. Demote, don't
+  retry: a bundle whose JS thread is genuinely wedged (e.g. a synchronous
+  infinite loop) will likely wedge the same way again.
+- `WallpaperWebViewHost` owns three failure modes, all funneling into the
+  same one-way demotion (a live wallpaper has no crash UI to fall back on):
+  a watchdog timeout or a dead renderer process (`BundleWebView`'s
+  `onRenderProcessGone`, which must return `true` — returning `false`, the
+  default if unoverridden, kills this app's whole process, not just the one
+  WebView) demotes immediately to a static fallback color (`#0B0F1A`,
+  matching the glass UI's backdrop); a main-frame load failure gets one
+  retry with a 10s timeout, demoting only if the retry also fails. A fresh
+  attempt only happens if the host itself is recreated (wallpaper
+  reselected, or the engine torn down and rebuilt).
+- Along the way, fixed two real bugs in `web/WebViewTimers` (the
+  process-shared `pauseTimers`/`resumeTimers` latch, since that call is
+  process-global and affects every WebView, not just the caller's) found
+  while live-testing the watchdog's fallback path: the "needs timers" claim
+  at WebView creation was conditional on `!pauseWhenHidden`, so a
+  freshly-created engine could inherit an already-paused latch left by a
+  just-torn-down prior engine and never resume; and rapid
+  true/false/true visibility churn within ~20ms of a brand-new WebView's
+  creation (observed on-device during engine handoff) could physically
+  pause/resume Chromium's timers before the renderer had even attached,
+  wedging the page's own bootstrap script. Fixed by claiming timers
+  unconditionally at creation and debouncing the physical toggle by 250ms.
+- **Platform limitation found while testing, not a Lumenfall bug**: a
+  bundle whose JS busy-loops with zero yield points (`for(;;){}`) wedges the
+  *native renderer process's* main thread so completely that it cannot
+  respond to Chromium's own IPC-based teardown request. `WebView.destroy()`
+  only tears down the Java-side proxy — the OS-level sandboxed renderer
+  process survives indefinitely (confirmed via `adb shell ps -A`: one such
+  process ran at 90%+ CPU for 3+ minutes across several subsequent
+  demote/destroy cycles), and Android has no public API for an app to
+  force-kill a specific isolated sandboxed process it doesn't own the UID
+  for. The only reclaim path is `adb shell am force-stop <package>`, which
+  tears down the whole app process and its bound isolated children together
+  — a debugging/testing note, not something the app can (or needs to) defend
+  against, since real-world hangs are far more likely to be a stalled fetch
+  or a slow loop with actual yield points than a hand-authored `for(;;){}`.
+
 The Android runtime should not try to share Swift code with ÆtherDesk. The
 portable contract is the data shape: Lively metadata, property definitions,
 property overrides, validation rules, and the JavaScript bridge semantics.
