@@ -95,7 +95,11 @@ Settings UI (DONE, 2026-07-03):
   Real backdrop blur of arbitrary content isn't available to a plain View
   hierarchy on Android without Compose + a blur library, so this leans on
   translucency, thin borders, and rounded-corner WebView clipping instead of
-  live blur.
+  live blur. Floating popups (the dropdown menu) are the one exception: a
+  popup sits over arbitrary content and the anchor view keeps rendering
+  underneath it, so the panel-level translucency there let the anchor's own
+  text bleed through and read as illegible — popups get their own near-opaque
+  fill (`glass_popup_bg`, `glass_popup_fill` in colors.xml) instead.
 - `web/PerformanceGovernor` watches the embedded preview for a control change
   that's overloading the device. There's no public per-app GPU usage API, so
   it uses achieved-fps-vs-target from the bridge shim's frame counter (the
