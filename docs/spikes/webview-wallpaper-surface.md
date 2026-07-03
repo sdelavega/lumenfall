@@ -147,7 +147,11 @@ Validated by side-loading via `adb` and setting Lumenfall as the live wallpaper.
 - **Visible CPU is high:** ~111% (≈1.1 cores) for the busy 60 fps canvas in a
   *debug* build. Needs a release-build + frame-pacing pass before it's
   battery-acceptable; not a spike blocker. (Hidden CPU is 0, which is what
-  matters most.)
+  matters most.) UPDATE (2026-07-03): the R8-minified release build measures
+  ~60% of one core visible for the same bundle class (ConfigRings, 60 fps
+  canvas) and 0.0% hidden, with RSS dropping 418→311 MB when covered. Release
+  alone roughly halved visible cost; a frame-pacing cap is still on the table
+  if real bundles need it.
 - **The shim-injection race is real, observed live.** The WebGL probe's one-shot
   GPU-renderer report (sent at script start) never reached native because
   `window.aetherDesk` did not exist yet — the shim is injected at

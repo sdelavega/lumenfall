@@ -91,6 +91,23 @@ Native build (DONE, 2026-06-29):
   owns the `aarch64-linux-android` target — NOT the Homebrew `rust` formula. The
   Gradle task prepends `~/.cargo/bin` to PATH to guarantee this.
 
+Release build (DONE, 2026-07-03):
+
+- `buildTypes.release` enables R8 minification + resource shrinking.
+  `app/proguard-rules.pro` keeps the two name-resolved surfaces: the
+  `LumenfallCore` JNI class/methods (Rust exports
+  `Java_com_aetherdesk_lumenfall_core_LumenfallCore_*` symbols) and
+  `@JavascriptInterface` bridge methods (called by name from bundle JS).
+- Signing reads a gitignored `keystore.properties` + `release.jks` at the repo
+  root; when absent (fresh checkout, CI) release falls back to the debug key so
+  it still assembles. The keystore is the app's permanent identity — back it up
+  privately; losing it means users can never update.
+- Verified on the Pixel Tablet: import (both JNI calls), all three renderer
+  kinds, settings UI, and override persistence work minified. APK is 3.5 MB.
+  Visible CPU for the busy 60 fps web bundle: ~60% of one core (vs ~111%
+  debug); 0.0% hidden. Debug↔release switches need a full uninstall (different
+  signatures), which wipes imported bundles.
+
 Open questions:
 
 - Can a WebView be hosted safely and efficiently for a live wallpaper, or do we
