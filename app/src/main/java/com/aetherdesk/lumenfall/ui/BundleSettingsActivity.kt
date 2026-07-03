@@ -4,6 +4,8 @@ import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
@@ -31,6 +33,7 @@ import com.aetherdesk.lumenfall.storage.AppSettingsStore
 import com.aetherdesk.lumenfall.storage.BundleProperty
 import com.aetherdesk.lumenfall.storage.BundleStore
 import com.aetherdesk.lumenfall.web.BundleWebView
+import com.aetherdesk.lumenfall.web.ContactedDomains
 import com.aetherdesk.lumenfall.web.PerformanceGovernor
 import com.aetherdesk.lumenfall.web.PerformancePolicy
 import com.aetherdesk.lumenfall.web.WebViewTimers
@@ -81,6 +84,18 @@ class BundleSettingsActivity : AppCompatActivity() {
     private var pendingChange: PendingChange? = null
     private var currentPreviewFpsCap = BundleWebView.DEFAULT_FPS_CAP
 
+    // Contacted-domains transparency readout (web bundles). The embedded
+    // preview (and the home-screen engine, same process) contact domains
+    // live, so the label refreshes on a short timer while resumed.
+    private var domainsLabel: TextView? = null
+    private val domainsHandler = Handler(Looper.getMainLooper())
+    private val domainsRefresh = object : Runnable {
+        override fun run() {
+            updateDomainsLabel()
+            domainsHandler.postDelayed(this, DOMAINS_REFRESH_MS)
+        }
+    }
+
     private data class PendingChange(val key: String, val previousValue: Any?, val atMs: Long)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -119,6 +134,18 @@ class BundleSettingsActivity : AppCompatActivity() {
             })
         } else {
             props.forEach { form.addView(glassPanel(controlFor(it, currentValues[it.key]))) }
+        }
+        if (meta?.kind == "web") {
+            // Network transparency, ported from ÆtherDesk: which external
+            // domains this bundle has actually reached (allowed requests only;
+            // blocked ones never left the device).
+            val label = TextView(this).apply {
+                setTextColor(getColor(R.color.glass_text_secondary))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            }
+            domainsLabel = label
+            updateDomainsLabel()
+            form.addView(glassPanel(label))
         }
         formScroll = ScrollView(this).apply { addView(form) }
 
@@ -242,6 +269,7 @@ class BundleSettingsActivity : AppCompatActivity() {
             blockExternalNetwork = settings.blockExternalNetwork,
             allowLan = settings.allowLan,
             initiallySuspended = resolved.initiallySuspended,
+            bundleId = bundleId,
             onLog = { handlePreviewMessage(it) }
         ).apply { layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT) }
 
@@ -283,15 +311,27 @@ class BundleSettingsActivity : AppCompatActivity() {
             WebViewTimers.setNeedsTimers(this, it, true)
         }
         governor?.start()
+        if (domainsLabel != null) domainsHandler.postDelayed(domainsRefresh, DOMAINS_REFRESH_MS)
     }
 
     override fun onPause() {
+        domainsHandler.removeCallbacks(domainsRefresh)
         governor?.stop()
         preview?.let {
             it.onPause()
             WebViewTimers.setNeedsTimers(this, it, false)
         }
         super.onPause()
+    }
+
+    private fun updateDomainsLabel() {
+        val label = domainsLabel ?: return
+        val domains = ContactedDomains.get(bundleId)
+        label.text = if (domains.isEmpty()) {
+            "No external domains contacted yet."
+        } else {
+            "Domains contacted: " + domains.sorted().joinToString(", ")
+        }
     }
 
     override fun onDestroy() {
@@ -539,6 +579,7 @@ class BundleSettingsActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_BUNDLE_ID = "bundle_id"
         private const val TAG = "LumenfallSettings"
+        private const val DOMAINS_REFRESH_MS = 2000L
         private const val ATTRIBUTION_WINDOW_MS = 8000L
         private const val COALESCE_GAP_MS = 1500L
         private const val MIN_EASE_FPS = 10

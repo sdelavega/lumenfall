@@ -99,6 +99,7 @@ class LumenfallWallpaperService : WallpaperService() {
                 allowLan = settings.allowLan,
                 initiallySuspended = resolved.initiallySuspended,
                 pauseWhenHidden = settings.pauseWhenNotVisible,
+                bundleId = webBundle?.id,
                 onHeartbeat = { Log.d(TAG, "web heartbeat") },
                 onLog = { Log.d(TAG, "web bridge: $it") }
             )

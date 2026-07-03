@@ -56,6 +56,8 @@ object BundleWebView {
         blockExternalNetwork: Boolean = false,
         allowLan: Boolean = false,
         initiallySuspended: Boolean = false,
+        /** When set, allowed external requests are recorded in [ContactedDomains]. */
+        bundleId: String? = null,
         onHeartbeat: () -> Unit = {},
         onLog: (String) -> Unit = {},
         onPageLoaded: () -> Unit = {},
@@ -113,6 +115,12 @@ object BundleWebView {
                         return WebResourceResponse(
                             "text/plain", "utf-8", ByteArrayInputStream(ByteArray(0))
                         )
+                    }
+                    // Transparency ledger: only requests that are actually
+                    // going out. Blocked ones never happened, and are already
+                    // surfaced through onLog above.
+                    if (bundleId != null) {
+                        request.url.host?.let { ContactedDomains.log(bundleId, it) }
                     }
                     return null
                 }

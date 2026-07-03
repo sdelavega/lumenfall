@@ -31,6 +31,7 @@ import com.aetherdesk.lumenfall.storage.AppSettingsStore
 import com.aetherdesk.lumenfall.storage.BundleMeta
 import com.aetherdesk.lumenfall.storage.BundleStore
 import com.aetherdesk.lumenfall.web.BundleThumbnailer
+import com.aetherdesk.lumenfall.web.ContactedDomains
 import kotlin.concurrent.thread
 
 /**
@@ -194,8 +195,10 @@ class MainActivity : AppCompatActivity() {
             })
         })
 
-        // Bundles with LivelyProperties expose a settings entry point.
-        if (store.properties(meta.id).isNotEmpty()) {
+        // Bundles with LivelyProperties expose a settings entry point; so does
+        // every web bundle regardless — its settings screen carries the live
+        // preview and the contacted-domains transparency readout.
+        if (meta.kind == "web" || store.properties(meta.id).isNotEmpty()) {
             row.addView(GlassUi.flatButton(this, "Settings") {
                 startActivity(
                     Intent(this@MainActivity, BundleSettingsActivity::class.java)
@@ -362,6 +365,7 @@ class MainActivity : AppCompatActivity() {
             destructive = true
         ) {
             store.delete(meta.id)
+            ContactedDomains.clear(meta.id)
             refresh()
         }
     }

@@ -55,6 +55,8 @@ class WallpaperWebViewHost(
     private val initiallySuspended: Boolean = false,
     /** Global Performance setting: whether hiding the wallpaper should pause it at all. */
     private val pauseWhenHidden: Boolean = true,
+    /** When set, allowed external requests are recorded in [ContactedDomains]. */
+    private val bundleId: String? = null,
     private val onHeartbeat: () -> Unit = {},
     private val onLog: (String) -> Unit = {}
 ) : WallpaperRenderer {
@@ -123,6 +125,7 @@ class WallpaperWebViewHost(
             allowLan = allowLan,
             initiallySuspended = initiallySuspended,
             pauseWhenHidden = pauseWhenHidden,
+            bundleId = bundleId,
             onHeartbeat = onHeartbeat,
             onLog = onLog,
             onIrrecoverable = ::markFailed
@@ -239,6 +242,7 @@ private class WallpaperPresentation(
     private val allowLan: Boolean,
     private val initiallySuspended: Boolean,
     private val pauseWhenHidden: Boolean,
+    private val bundleId: String?,
     private val onHeartbeat: () -> Unit,
     private val onLog: (String) -> Unit,
     private val onIrrecoverable: () -> Unit
@@ -263,6 +267,7 @@ private class WallpaperPresentation(
             blockExternalNetwork = blockExternalNetwork,
             allowLan = allowLan,
             initiallySuspended = initiallySuspended,
+            bundleId = bundleId,
             onHeartbeat = { watchdog.poke(); onHeartbeat() },
             onLog = { message ->
                 if (message.contains("\"tick\"")) watchdog.poke()

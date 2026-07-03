@@ -304,6 +304,7 @@ object BundleThumbnailer {
                         if (limited) screening?.networkBudgetPerMinute ?: 5 else null,
                     blockExternalNetwork = settings.blockExternalNetwork,
                     allowLan = settings.allowLan,
+                    bundleId = meta.id,
                     onPageLoaded = { this@WebCapture.onPageLoaded() },
                     onRenderProcessGone = { this@WebCapture.finish(null) },
                     onMainFrameLoadFailed = { this@WebCapture.finish(null) }
