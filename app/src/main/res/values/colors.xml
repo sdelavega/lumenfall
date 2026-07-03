@@ -1,0 +1,23 @@
+<resources>
+    <!-- "Liquid Glass" facsimile palette: translucent frosted panels over a dark
+         backdrop, with a single vivid accent for interactive elements. Android has
+         no public API for real-time backdrop blur of arbitrary content (that's a
+         Compose + custom-compositor feature), so this approximates the material
+         with translucency, soft gradients, thin light borders, and elevation. -->
+    <color name="glass_backdrop_top">#0B0F1A</color>
+    <color name="glass_backdrop_bottom">#141C30</color>
+
+    <color name="glass_panel_fill_top">#26FFFFFF</color>
+    <color name="glass_panel_fill_bottom">#0DFFFFFF</color>
+    <color name="glass_panel_stroke">#40FFFFFF</color>
+
+    <color name="glass_field_fill">#1AFFFFFF</color>
+    <color name="glass_field_stroke">#33FFFFFF</color>
+
+    <color name="glass_track_inactive">#33FFFFFF</color>
+    <color name="glass_accent">#64D2FF</color>
+    <color name="glass_accent_dim">#3364D2FF</color>
+
+    <color name="glass_text_primary">#FFFFFFFF</color>
+    <color name="glass_text_secondary">#B3FFFFFF</color>
+</resources>

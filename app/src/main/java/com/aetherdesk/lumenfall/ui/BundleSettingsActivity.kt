@@ -1,28 +1,40 @@
 package com.aetherdesk.lumenfall.ui
 
+import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.view.ViewOutlineProvider
+import android.webkit.WebView
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
-import android.widget.Button
-import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
+import com.aetherdesk.lumenfall.R
 import com.aetherdesk.lumenfall.render.PropertyBus
 import com.aetherdesk.lumenfall.storage.BundleProperty
 import com.aetherdesk.lumenfall.storage.BundleStore
+import com.aetherdesk.lumenfall.web.BundleWebView
+import com.aetherdesk.lumenfall.web.PerformanceGovernor
+import com.aetherdesk.lumenfall.web.WebViewTimers
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.slider.Slider
 import org.json.JSONObject
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
@@ -31,76 +43,289 @@ import kotlin.math.roundToLong
  * Per-bundle settings: renders a control for each property from
  * `LivelyProperties.json`, persists the user's choice as an override, and pushes
  * the change to the running wallpaper via [PropertyBus] for a live update.
+ *
+ * Web bundles also get a live preview: an embedded [WebView] running the actual
+ * bundle (same sandbox/limits as the wallpaper, via [BundleWebView]), registered
+ * on the [PropertyBus] like any engine — so every control change is visible the
+ * moment it's made. (The real wallpaper engine is destroyed underneath this
+ * fullscreen Activity, so without the preview a live push has no audience.)
+ *
+ * Layout is responsive: side-by-side (settings left, preview right) in
+ * landscape, stacked (preview top, settings bottom) in portrait. The Activity
+ * survives rotation itself (see `configChanges` in the manifest) so the
+ * preview WebView isn't torn down and reloaded on every turn.
+ *
+ * A [PerformanceGovernor] watches the live preview for signs a setting has
+ * pushed the device past what it can sustain — achieved fps well under the
+ * bundle's cap, sustained high CPU, or system memory pressure — and responds
+ * by reverting the most recent control change, or easing the preview's frame
+ * rate when overload isn't attributable to a specific change.
  */
 class BundleSettingsActivity : AppCompatActivity() {
 
     private val store by lazy { BundleStore(this) }
     private lateinit var bundleId: String
+    private var meta: com.aetherdesk.lumenfall.storage.BundleMeta? = null
+
+    private var preview: WebView? = null
+    private var previewContainer: View? = null
+    private var formScroll: View? = null
+    private var content: LinearLayout? = null
+    private var governor: PerformanceGovernor? = null
+
+    // Live state for the revert-on-overload flow.
+    private val currentValues = mutableMapOf<String, Any?>()
+    private val liveControls = mutableMapOf<String, (Any?) -> Unit>()
+    private val displayNames = mutableMapOf<String, String>()
+    private var pendingChange: PendingChange? = null
+    private var currentPreviewFpsCap = BundleWebView.DEFAULT_FPS_CAP
+
+    private data class PendingChange(val key: String, val previousValue: Any?, val atMs: Long)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         bundleId = intent.getStringExtra(EXTRA_BUNDLE_ID) ?: return finish()
 
-        val meta = store.get(bundleId)
+        val meta = store.get(bundleId).also { meta = it }
         val props = store.properties(bundleId)
         val effective = store.effectiveValues(bundleId)
+        props.forEach { p ->
+            displayNames[p.key] = p.displayName
+            currentValues[p.key] = currentOf(p, effective)
+        }
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(24), dp(20), dp(24))
+            setPadding(dp(20), dp(24), dp(20), dp(20))
+            setBackgroundResource(R.drawable.glass_backdrop_bg)
         }
         root.addView(TextView(this).apply {
             text = meta?.title ?: "Settings"
+            setTextColor(getColor(R.color.glass_text_primary))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
         })
+
+        if (meta?.kind == "web" && meta.entryPath != null) {
+            previewContainer = buildPreviewContainer(meta.entryPath, effective.toString())
+        }
 
         val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         if (props.isEmpty()) {
             form.addView(TextView(this).apply {
                 text = "This bundle has no configurable properties."
-                setTextColor(Color.GRAY)
+                setTextColor(getColor(R.color.glass_text_secondary))
                 setPadding(0, dp(24), 0, 0)
             })
         } else {
-            props.forEach { form.addView(controlFor(it, currentOf(it, effective))) }
+            props.forEach { form.addView(glassPanel(controlFor(it, currentValues[it.key]))) }
         }
-        root.addView(ScrollView(this).apply {
-            addView(form)
+        formScroll = ScrollView(this).apply { addView(form) }
+
+        content = LinearLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f).apply { topMargin = dp(12) }
-        })
+        }
+        root.addView(content)
         setContentView(root)
+        relayout()
+    }
+
+    /** Flip between side-by-side (landscape) and stacked (portrait) without rebuilding the preview or form. */
+    private fun relayout() {
+        val c = content ?: return
+        val preview = previewContainer
+        val form = formScroll ?: return
+
+        (preview?.parent as? ViewGroup)?.removeView(preview)
+        (form.parent as? ViewGroup)?.removeView(form)
+
+        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        if (landscape) {
+            c.orientation = LinearLayout.HORIZONTAL
+            // Settings on the left, preview on the right.
+            c.addView(form, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f).apply { marginEnd = if (preview != null) dp(12) else 0 })
+            preview?.let { c.addView(it, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f)) }
+        } else {
+            c.orientation = LinearLayout.VERTICAL
+            // Preview on top, settings on the bottom.
+            preview?.let { c.addView(it, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f).apply { bottomMargin = dp(12) }) }
+            c.addView(form, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        relayout()
     }
 
     private fun currentOf(p: BundleProperty, effective: JSONObject): Any? =
         if (effective.has(p.key)) effective.get(p.key) else p.defaultValue
 
-    /** Persist the override and nudge the running wallpaper. */
+    /**
+     * Persist the override, nudge the running wallpaper/preview, and remember
+     * the prior value for revert. A slider drag fires this once per step, not
+     * once per gesture — so a same-key change arriving soon after the last one
+     * is treated as a continuation of the same interaction: the revert target
+     * stays the value from *before the drag started*, only the timestamp
+     * (and hence the attribution window) refreshes. Otherwise a revert would
+     * only undo the final, imperceptible micro-step.
+     */
     private fun apply(key: String, value: Any?) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val existing = pendingChange
+        val previous = if (existing != null && existing.key == key && now - existing.atMs < COALESCE_GAP_MS) {
+            existing.previousValue
+        } else {
+            currentValues[key]
+        }
+        pendingChange = PendingChange(key, previous, now)
+        currentValues[key] = value
         store.setOverride(bundleId, key, value)
         PropertyBus.notify(bundleId, key, value)
     }
 
-    private fun controlFor(p: BundleProperty, current: Any?): View {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(16), 0, dp(4))
+    /** Revert the most recent change if one happened recently. Returns false if there was nothing eligible. */
+    private fun revertLastChange(): String? {
+        val pending = pendingChange ?: return null
+        if (android.os.SystemClock.elapsedRealtime() - pending.atMs > ATTRIBUTION_WINDOW_MS) return null
+        pendingChange = null
+        currentValues[pending.key] = pending.previousValue
+        store.setOverride(bundleId, pending.key, pending.previousValue)
+        PropertyBus.notify(bundleId, pending.key, pending.previousValue)
+        liveControls[pending.key]?.invoke(pending.previousValue)
+        return displayNames[pending.key] ?: pending.key
+    }
+
+    private fun respondToOverload(reason: PerformanceGovernor.OverloadReason) {
+        val revertedName = revertLastChange()
+        if (revertedName != null) {
+            toast("Reverted \"$revertedName\" — too demanding for this device")
+            return
         }
+        val wv = preview
+        val reduced = (currentPreviewFpsCap / 2).coerceAtLeast(MIN_EASE_FPS)
+        if (wv != null && reduced < currentPreviewFpsCap) {
+            currentPreviewFpsCap = reduced
+            wv.evaluateJavascript(
+                "window.aetherDesk && (window.aetherDesk.system.fpsCap = $reduced);", null
+            )
+            // Recalibrate the governor's own threshold to the new cap, or it
+            // keeps comparing achieved fps against the stale, higher target
+            // and ratchets straight down to the floor even at light load.
+            governor?.updateFpsCap(reduced)
+            toast("Reduced live-preview frame rate to $reduced fps to protect your device")
+        } else {
+            toast("This bundle may be too demanding for smooth playback on this device")
+        }
+    }
+
+    /**
+     * The live preview: the real bundle in the shared sandboxed WebView with the
+     * same screening limits the wallpaper runs under, subscribed to the bus so
+     * [apply]'s existing notify drives it, and watched by [PerformanceGovernor].
+     * Wrapped in a rounded, clipped glass panel so its corners match the rest of
+     * the UI.
+     */
+    private fun buildPreviewContainer(entryPath: String, effectiveJson: String): View {
+        val screening = store.screening(bundleId)
+        val limited = screening?.limited ?: true
+        currentPreviewFpsCap = screening?.fpsCap ?: BundleWebView.DEFAULT_FPS_CAP
+        val wv = BundleWebView.create(
+            context = this,
+            initialProperties = effectiveJson,
+            fpsCap = currentPreviewFpsCap,
+            networkBudgetPerMinute = if (limited) screening?.networkBudgetPerMinute ?: 5 else null,
+            onLog = { handlePreviewMessage(it) }
+        ).apply { layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT) }
+
+        // Timer control is process-global and shared with the (possibly hidden)
+        // wallpaper engine — declare our need through the latch, never directly.
+        WebViewTimers.setNeedsTimers(this, wv, true)
+        wv.loadUrl("${BundleWebView.APP_ORIGIN}/bundles/$bundleId/$entryPath")
+        PropertyBus.register(this, bundleId) { key, value ->
+            BundleWebView.pushProperty(wv, key, value)
+        }
+        preview = wv
+
+        governor = PerformanceGovernor(this, currentPreviewFpsCap, ::respondToOverload).also { it.start() }
+
+        return FrameLayout(this).apply {
+            setBackgroundResource(R.drawable.glass_panel_bg)
+            setPadding(dp(1), dp(1), dp(1), dp(1))
+            clipToOutline = true
+            outlineProvider = ViewOutlineProvider.BACKGROUND
+            addView(wv)
+        }
+    }
+
+    /** Bridge messages from the preview: performance ticks feed the governor, everything else just logs. */
+    private fun handlePreviewMessage(payload: String) {
+        if (payload.contains("\"tick\"")) {
+            Regex("\"frames\":(\\d+)").find(payload)?.groupValues?.get(1)?.toIntOrNull()?.let {
+                governor?.onFrameReport(it)
+            }
+        } else {
+            Log.d(TAG, "preview: $payload")
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        preview?.let {
+            it.onResume()
+            WebViewTimers.setNeedsTimers(this, it, true)
+        }
+        governor?.start()
+    }
+
+    override fun onPause() {
+        governor?.stop()
+        preview?.let {
+            it.onPause()
+            WebViewTimers.setNeedsTimers(this, it, false)
+        }
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        governor?.stop()
+        PropertyBus.unregister(this)
+        preview?.let { WebViewTimers.forget(this, it) }
+        preview?.destroy()
+        preview = null
+        super.onDestroy()
+    }
+
+    /** Wraps a control's box in a translucent "glass" card, per the ported ÆtherDesk aesthetic. */
+    private fun glassPanel(inner: View): View = FrameLayout(this).apply {
+        setBackgroundResource(R.drawable.glass_panel_bg)
+        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(12) }
+        setPadding(dp(16), dp(14), dp(16), dp(14))
+        addView(inner)
+    }
+
+    private fun controlFor(p: BundleProperty, current: Any?): View {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         box.addView(TextView(this).apply {
             text = p.displayName
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTextColor(getColor(R.color.glass_text_secondary))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setPadding(0, 0, 0, dp(6))
         })
         box.addView(
             when (p.type.lowercase()) {
                 "slider" -> sliderControl(p, current)
-                "checkbox" -> checkboxControl(p, current)
+                "checkbox" -> switchControl(p, current)
                 "dropdown" -> dropdownControl(p, current)
                 "color" -> colorControl(p, current)
                 "label" -> TextView(this).apply {
                     text = (current ?: "").toString()
-                    setTextColor(Color.GRAY)
+                    setTextColor(getColor(R.color.glass_text_secondary))
                 }
-                "button" -> Button(this).apply {
+                "button" -> MaterialButton(this).apply {
                     text = "Run"
+                    setBackgroundColor(getColor(R.color.glass_field_fill))
+                    setTextColor(getColor(R.color.glass_accent))
+                    cornerRadius = dp(14)
                     setOnClickListener { PropertyBus.notify(bundleId, p.key, true) }
                 }
                 else -> textControl(p, current) // textbox + unknown -> editable text
@@ -115,64 +340,125 @@ class BundleSettingsActivity : AppCompatActivity() {
         val step = p.raw.optDouble("step", 1.0).let { if (it <= 0.0) 1.0 else it }
         val integral = step % 1.0 == 0.0 && min % 1.0 == 0.0
         val steps = maxOf(1, ((max - min) / step).roundToInt())
-        val cur = (current as? Number)?.toDouble() ?: min
+        val snappedMax = min + steps * step // Slider requires an evenly divisible range
+        val cur = ((current as? Number)?.toDouble() ?: min).coerceIn(min, snappedMax)
+        fun fmt(v: Double) = if (integral) v.roundToLong().toString() else String.format("%.2f", v)
 
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         val valueLabel = TextView(this).apply {
-            minWidth = dp(56)
+            minWidth = dp(52)
             gravity = Gravity.END
+            setTextColor(getColor(R.color.glass_text_primary))
+            text = fmt(cur)
         }
-        fun fmt(v: Double) = if (integral) v.roundToLong().toString() else String.format("%.2f", v)
-
-        val seek = SeekBar(this).apply {
-            this.max = steps
-            progress = ((cur - min) / step).roundToInt().coerceIn(0, steps)
+        val slider = Slider(this).apply {
+            valueFrom = min.toFloat()
+            valueTo = snappedMax.toFloat()
+            stepSize = step.toFloat()
+            value = cur.toFloat()
+            labelBehavior = com.google.android.material.slider.LabelFormatter.LABEL_GONE
+            trackHeight = dp(6)
+            trackActiveTintList = ColorStateList.valueOf(getColor(R.color.glass_accent))
+            trackInactiveTintList = ColorStateList.valueOf(getColor(R.color.glass_track_inactive))
+            thumbTintList = ColorStateList.valueOf(getColor(R.color.glass_accent))
+            haloTintList = ColorStateList.valueOf(getColor(R.color.glass_accent_dim))
             layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(sb: SeekBar, prog: Int, fromUser: Boolean) {
-                    val v = min + prog * step
-                    valueLabel.text = fmt(v)
-                    if (fromUser) apply(p.key, if (integral) v.roundToLong() else (v * 1000).roundToLong() / 1000.0)
-                }
-                override fun onStartTrackingTouch(sb: SeekBar) {}
-                override fun onStopTrackingTouch(sb: SeekBar) {}
-            })
+            addOnChangeListener { _, value, fromUser ->
+                valueLabel.text = fmt(value.toDouble())
+                if (fromUser) apply(p.key, if (integral) value.roundToLong() else (value * 1000).roundToLong() / 1000.0)
+            }
         }
-        valueLabel.text = fmt(min + seek.progress * step)
-        row.addView(seek)
+        liveControls[p.key] = { v ->
+            val d = ((v as? Number)?.toDouble() ?: min).coerceIn(min, snappedMax)
+            slider.value = d.toFloat()
+            valueLabel.text = fmt(d)
+        }
+        row.addView(slider)
         row.addView(valueLabel)
         return row
     }
 
-    private fun checkboxControl(p: BundleProperty, current: Any?): View =
-        CheckBox(this).apply {
+    private fun switchControl(p: BundleProperty, current: Any?): View {
+        val onTint = ColorStateList(
+            arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+            intArrayOf(getColor(R.color.glass_accent), getColor(R.color.glass_track_inactive))
+        )
+        val thumbTint = ColorStateList(
+            arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+            intArrayOf(getColor(R.color.glass_text_primary), getColor(R.color.glass_text_secondary))
+        )
+        lateinit var listener: (View, Boolean) -> Unit
+        // Plain SwitchCompat, not Material's MaterialSwitch: MaterialSwitch's
+        // default style expects Material3 theme attributes this app's
+        // Material2 theme doesn't define, which left it invisible (and, with
+        // showText unset, crashed with an NPE on a null text layout).
+        // SwitchCompat's default style is theme-lineage-appropriate and just
+        // as tintable.
+        val toggle = SwitchCompat(this).apply {
+            showText = false
+            textOn = ""
+            textOff = ""
             isChecked = current as? Boolean ?: false
-            setOnCheckedChangeListener { _, checked -> apply(p.key, checked) }
+            trackTintList = onTint
+            thumbTintList = thumbTint
+            listener = { _, checked -> apply(p.key, checked) }
+            setOnCheckedChangeListener { view, checked -> listener(view, checked) }
         }
+        liveControls[p.key] = { v ->
+            toggle.setOnCheckedChangeListener(null)
+            toggle.isChecked = v as? Boolean ?: false
+            toggle.setOnCheckedChangeListener { view, checked -> listener(view, checked) }
+        }
+        return toggle
+    }
 
     private fun dropdownControl(p: BundleProperty, current: Any?): View {
         val itemsArr = p.raw.optJSONArray("items") ?: return textControl(p, current)
         val items = (0 until itemsArr.length()).map { itemsArr.optString(it) }
-        return Spinner(this).apply {
-            adapter = ArrayAdapter(
-                this@BundleSettingsActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                items
-            )
+        lateinit var listener: AdapterView.OnItemSelectedListener
+        val spinner = Spinner(this).apply {
+            adapter = glassSpinnerAdapter(items)
+            setBackgroundResource(R.drawable.glass_field_bg)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setPopupBackgroundResource(R.drawable.glass_panel_bg)
             var skipFirst = true
-            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            listener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) {
                     if (skipFirst) { skipFirst = false; return }
                     apply(p.key, position)
                 }
                 override fun onNothingSelected(parent: AdapterView<*>?) {}
             }
+            onItemSelectedListener = listener
             setSelection(((current as? Number)?.toInt() ?: 0).coerceIn(0, maxOf(0, items.size - 1)))
         }
+        liveControls[p.key] = { v ->
+            spinner.onItemSelectedListener = null
+            spinner.setSelection(((v as? Number)?.toInt() ?: 0).coerceIn(0, maxOf(0, items.size - 1)))
+            spinner.onItemSelectedListener = listener
+        }
+        return spinner
     }
+
+    private fun glassSpinnerAdapter(items: List<String>): ArrayAdapter<String> =
+        object : ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, items) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val v = super.getView(position, convertView, parent) as TextView
+                v.setTextColor(getColor(R.color.glass_text_primary))
+                v.setPadding(0, 0, 0, 0)
+                return v
+            }
+            override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val v = super.getDropDownView(position, convertView, parent) as TextView
+                v.setTextColor(getColor(R.color.glass_text_primary))
+                v.setBackgroundColor(Color.TRANSPARENT)
+                v.setPadding(dp(16), dp(12), dp(16), dp(12))
+                return v
+            }
+        }
 
     private fun colorControl(p: BundleProperty, current: Any?): View {
         val initial = (current as? String) ?: "#ffffff"
@@ -181,43 +467,72 @@ class BundleSettingsActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         val swatch = View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).apply { rightMargin = dp(12) }
+            layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(12) }
             runCatching { setBackgroundColor(Color.parseColor(initial)) }
         }
         val edit = EditText(this).apply {
             setText(initial)
+            setTextColor(getColor(R.color.glass_text_primary))
+            setBackgroundResource(R.drawable.glass_field_bg)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
             layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
-            afterTextChanged { text ->
-                runCatching {
-                    val c = Color.parseColor(text)
-                    swatch.setBackgroundColor(c)
-                    apply(p.key, text)
-                }
+        }
+        val watcher = edit.afterTextChanged { text ->
+            runCatching {
+                val c = Color.parseColor(text)
+                swatch.setBackgroundColor(c)
+                apply(p.key, text)
             }
+        }
+        liveControls[p.key] = { v ->
+            val hex = (v as? String) ?: "#ffffff"
+            edit.setTextSilently(watcher, hex)
+            runCatching { swatch.setBackgroundColor(Color.parseColor(hex)) }
         }
         row.addView(swatch)
         row.addView(edit)
         return row
     }
 
-    private fun textControl(p: BundleProperty, current: Any?): View =
-        EditText(this).apply {
+    private fun textControl(p: BundleProperty, current: Any?): View {
+        val edit = EditText(this).apply {
             setText(current?.toString() ?: "")
-            afterTextChanged { apply(p.key, it) }
+            setTextColor(getColor(R.color.glass_text_primary))
+            setBackgroundResource(R.drawable.glass_field_bg)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
         }
+        val watcher = edit.afterTextChanged { apply(p.key, it) }
+        liveControls[p.key] = { v -> edit.setTextSilently(watcher, v?.toString() ?: "") }
+        return edit
+    }
 
-    private fun EditText.afterTextChanged(action: (String) -> Unit) {
-        // Add the watcher AFTER setText so opening the screen doesn't write overrides.
-        addTextChangedListener(object : TextWatcher {
+    /** Adds the watcher and returns it so callers can detach/reattach for silent (non-firing) updates. */
+    private fun EditText.afterTextChanged(action: (String) -> Unit): TextWatcher {
+        val watcher = object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun afterTextChanged(s: Editable?) { action(s?.toString() ?: "") }
-        })
+        }
+        addTextChangedListener(watcher)
+        return watcher
     }
+
+    private fun EditText.setTextSilently(watcher: TextWatcher, value: String) {
+        removeTextChangedListener(watcher)
+        setText(value)
+        setSelection(text?.length ?: 0)
+        addTextChangedListener(watcher)
+    }
+
+    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     companion object {
         const val EXTRA_BUNDLE_ID = "bundle_id"
+        private const val TAG = "LumenfallSettings"
+        private const val ATTRIBUTION_WINDOW_MS = 8000L
+        private const val COALESCE_GAP_MS = 1500L
+        private const val MIN_EASE_FPS = 10
     }
 }

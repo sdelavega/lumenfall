@@ -20,6 +20,7 @@
 
         <activity
             android:name=".ui.BundleSettingsActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:exported="false" />
 
         <service
