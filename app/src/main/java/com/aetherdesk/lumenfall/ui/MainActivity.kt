@@ -30,6 +30,7 @@ import com.aetherdesk.lumenfall.service.LumenfallWallpaperService
 import com.aetherdesk.lumenfall.storage.AppSettingsStore
 import com.aetherdesk.lumenfall.storage.BundleMeta
 import com.aetherdesk.lumenfall.storage.BundleStore
+import com.aetherdesk.lumenfall.web.BundleThumbnailer
 import kotlin.concurrent.thread
 
 /**
@@ -150,6 +151,9 @@ class MainActivity : AppCompatActivity() {
             return
         }
         bundles.forEach { listContainer.addView(GlassUi.panel(this, rowFor(it, it.id == activeId), bottomMarginDp = 10)) }
+        // Backfill thumbnails for bundles that didn't declare a preview image;
+        // each one that lands re-renders the list so its tile fills in.
+        BundleThumbnailer.generateMissing(this, store) { if (!isDestroyed) refresh() }
     }
 
     private fun rowFor(meta: BundleMeta, isActive: Boolean): View {
