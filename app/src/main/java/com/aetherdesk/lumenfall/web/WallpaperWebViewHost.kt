@@ -20,6 +20,7 @@ import androidx.webkit.WebViewFeature
 import com.aetherdesk.lumenfall.bridge.AetherDeskBridge
 import com.aetherdesk.lumenfall.render.WallpaperRenderer
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import java.io.File
 
 /**
@@ -42,6 +43,8 @@ import java.io.File
 class WallpaperWebViewHost(
     private val context: Context,
     private val initialProperties: String = "{}",
+    private val fpsCap: Int = DEFAULT_FPS_CAP,
+    private val networkBudgetPerMinute: Int? = null,
     private val onHeartbeat: () -> Unit = {},
     private val onLog: (String) -> Unit = {}
 ) : WallpaperRenderer {
@@ -96,6 +99,8 @@ class WallpaperWebViewHost(
             outerContext = context,
             targetDisplay = vd.display,
             initialProperties = initialProperties,
+            fpsCap = fpsCap.coerceIn(MIN_FPS, MAX_FPS),
+            networkBudgetPerMinute = networkBudgetPerMinute,
             onHeartbeat = onHeartbeat,
             onLog = onLog
         )
@@ -134,9 +139,14 @@ class WallpaperWebViewHost(
         pendingUrl = null
     }
 
-    private companion object {
-        const val TAG = "LumenfallWebHost"
-        const val VIRTUAL_DISPLAY_NAME = "lumenfall-wallpaper"
+    companion object {
+        private const val TAG = "LumenfallWebHost"
+        private const val VIRTUAL_DISPLAY_NAME = "lumenfall-wallpaper"
+
+        // Same practical limits as ÆtherDesk (Constants.Defaults).
+        const val DEFAULT_FPS_CAP = 30
+        const val MIN_FPS = 15
+        const val MAX_FPS = 60
     }
 }
 
@@ -149,9 +159,13 @@ private class WallpaperPresentation(
     outerContext: Context,
     targetDisplay: Display,
     private val initialProperties: String,
+    private val fpsCap: Int,
+    networkBudgetPerMinute: Int?,
     private val onHeartbeat: () -> Unit,
     private val onLog: (String) -> Unit
 ) : Presentation(outerContext, targetDisplay) {
+
+    private val networkPolicy = WallpaperNetworkPolicy(networkBudgetPerMinute)
 
     private var webView: WebView? = null
     private var pendingUrl: String? = null
@@ -174,7 +188,7 @@ private class WallpaperPresentation(
         // (and its baked-in property values) exist before any bundle script runs.
         // DOCUMENT_START_SCRIPT is a runtime WebView feature, so keep a post-load
         // fallback for WebViews that lack it.
-        val shim = buildShim(initialProperties)
+        val shim = buildShim(initialProperties, fpsCap)
         val docStartSupported =
             WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
 
@@ -205,7 +219,31 @@ private class WallpaperPresentation(
                 override fun shouldInterceptRequest(
                     view: WebView,
                     request: WebResourceRequest
-                ): WebResourceResponse? = assetLoader.shouldInterceptRequest(request.url)
+                ): WebResourceResponse? {
+                    // Local bundle content: served by the asset loader, never
+                    // filtered. Everything else runs the network policy
+                    // (blocklist + SSRF guard + optional per-minute budget).
+                    if (request.url.host == APP_HOST) {
+                        return assetLoader.shouldInterceptRequest(request.url)
+                    }
+                    val verdict = networkPolicy.decide(request.url)
+                    if (verdict is WallpaperNetworkPolicy.Verdict.Block) {
+                        onLog("blocked ${request.url.host}: ${verdict.reason}")
+                        return WebResourceResponse(
+                            "text/plain", "utf-8", ByteArrayInputStream(ByteArray(0))
+                        )
+                    }
+                    return null
+                }
+
+                // A wallpaper never navigates: only same-origin (re)loads of
+                // bundle content may proceed as the main frame.
+                override fun shouldOverrideUrlLoading(
+                    view: WebView,
+                    request: WebResourceRequest
+                ): Boolean = (request.url.host != APP_HOST).also { blocked ->
+                    if (blocked) onLog("blocked navigation to ${request.url}")
+                }
 
                 override fun onPageFinished(view: WebView, url: String) {
                     if (!docStartSupported) view.evaluateJavascript(shim, null)
@@ -259,7 +297,8 @@ private class WallpaperPresentation(
     private companion object {
         // Virtual origin the WebViewAssetLoader serves bundles from; also the
         // origin the document-start bridge script is scoped to.
-        const val APP_ORIGIN = "https://appassets.androidplatform.net"
+        const val APP_HOST = "appassets.androidplatform.net"
+        const val APP_ORIGIN = "https://$APP_HOST"
 
         /** A JS literal for a property value pushed from native. */
         fun jsLiteral(value: Any?): String = when (value) {
@@ -275,16 +314,27 @@ private class WallpaperPresentation(
          * change: it updates `properties`, fires `onPropertyChange`, and also calls
          * Lively's `livelyPropertyListener` when a bundle defines one (so real
          * Lively wallpapers react too).
+         *
+         * Practical limits (ported from ÆtherDesk's runtime shim):
+         * - requestAnimationFrame is throttled to `system.fpsCap` using setTimeout
+         *   between frames, so the JS thread sleeps most of each interval instead
+         *   of waking at every display vsync (60–120 Hz on this hardware);
+         * - frames are dropped entirely while the wallpaper is hidden (suspend);
+         * - WebSocket connections to raw IPv4/IPv6 literals are refused (FQDN
+         *   sockets stay allowed) — sockets bypass shouldInterceptRequest, so this
+         *   is the only hook Android gives us.
          */
-        fun buildShim(propertiesJson: String): String = """
+        fun buildShim(propertiesJson: String, fpsCap: Int): String = """
             (function () {
               if (window.aetherDesk) return;
               var native = window.aetherDeskNative;
+              var suspended = false;
               window.aetherDesk = {
                 properties: $propertiesJson,
                 system: {
-                  suspend: function () {},
-                  resume: function () {},
+                  fpsCap: $fpsCap,
+                  suspend: function () { suspended = true; },
+                  resume: function () { suspended = false; },
                   heartbeat: function () {
                     if (native) native.postMessage('{"heartbeat":true}');
                   }
@@ -306,6 +356,41 @@ private class WallpaperPresentation(
                   }
                 }
               };
+
+              var _origRAF = window.requestAnimationFrame.bind(window);
+              var _lastFrame = 0;
+              window.requestAnimationFrame = function (cb) {
+                var cap = window.aetherDesk.system.fpsCap || $fpsCap;
+                var interval = 1000.0 / cap;
+                var elapsed = performance.now() - _lastFrame;
+                var delay = interval - elapsed;
+                function fire() {
+                  _origRAF(function (ts) {
+                    if (suspended) return;
+                    _lastFrame = ts;
+                    cb(ts);
+                  });
+                }
+                if (delay <= 4) { fire(); return 0; }
+                setTimeout(fire, delay - 4);
+                return 0;
+              };
+
+              var _OrigWS = window.WebSocket;
+              if (typeof _OrigWS === 'function') {
+                var RAW_IP = /^wss?:\/\/(\[|\d{1,3}(\.\d{1,3}){3}([\/:]|${'$'}))/i;
+                window.WebSocket = function (url, protocols) {
+                  if (RAW_IP.test(String(url))) {
+                    throw new DOMException('WebSocket to raw IP blocked', 'SecurityError');
+                  }
+                  return protocols === undefined ? new _OrigWS(url) : new _OrigWS(url, protocols);
+                };
+                window.WebSocket.prototype = _OrigWS.prototype;
+                ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'].forEach(function (k) {
+                  window.WebSocket[k] = _OrigWS[k];
+                });
+              }
+
               window.aetherDesk.system.heartbeat();
             })();
         """

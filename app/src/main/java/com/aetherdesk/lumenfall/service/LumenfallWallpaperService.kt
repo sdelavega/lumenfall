@@ -78,9 +78,16 @@ class LumenfallWallpaperService : WallpaperService() {
                 SPIKE_BUNDLE_URL
             }
             val props = webBundle?.let { store.effectiveValues(it.id).toString() } ?: "{}"
+            // Practical limits from import screening. Bundles without a report
+            // (pre-screening imports) run as "limited" — the conservative default.
+            val screening = webBundle?.let { store.screening(it.id) }
+            val limited = webBundle != null && (screening?.limited ?: true)
             val host = WallpaperWebViewHost(
                 context = service,
                 initialProperties = props,
+                fpsCap = screening?.fpsCap ?: WallpaperWebViewHost.DEFAULT_FPS_CAP,
+                networkBudgetPerMinute =
+                    if (limited) screening?.networkBudgetPerMinute ?: 5 else null,
                 onHeartbeat = { Log.d(TAG, "web heartbeat") },
                 onLog = { Log.d(TAG, "web bridge: $it") }
             )
