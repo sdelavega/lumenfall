@@ -112,12 +112,19 @@ foldable if available; cover Android 8 (minSdk 26) through current.
 - [x] Sustained FPS for a canvas bundle (target ~60, note thermal throttling).
 - [x] **WebGL** bundle renders (the real test of strategy B vs A).
 - [ ] Battery / GPU cost over 30–60 min idle on the home screen.
-- [ ] Memory footprint and stability across hours (no leak across
-      surface destroy/recreate cycles — rotate, lock/unlock, switch apps).
+- [x] Memory footprint and stability across churn (soaked 2026-07-03: 15
+      engine create/destroy cycles, 10 in-place bundle swaps, 16 rotations —
+      PSS 217→175→279→266 MB across phases with no monotonic growth,
+      sandboxed-renderer count flat at 3, zero E-level errors; multi-hour
+      wall-clock soak still untested).
 - [x] `onVisibilityChanged(false)` genuinely halts work (CPU ~0 when home screen
-      is covered); resume restores animation.
-- [ ] Rotation / multi-window / fold-unfold resizes correctly via
-      `VirtualDisplay.resize`.
+      is covered); resume restores animation. Soak follow-up (2026-07-03): an
+      engine can survive covered for 45s+ on this OEM, which exposed a
+      watchdog false-demotion bug (paused silence counted as a hang) — fixed
+      by pausing the watchdog with the content.
+- [x] Rotation / multi-window / fold-unfold resizes correctly via
+      `VirtualDisplay.resize` (soaked 2026-07-03: 16 forced rotations, no
+      errors, engine kept rendering; fold-unfold n/a on this hardware).
 - [~] Behaviour in the wallpaper **preview** pane (a second engine instance) —
       preview renders correctly; two-at-once leak not yet stress-tested.
 - [x] OEM spread: confirm `Presentation.show()` from a service context is allowed

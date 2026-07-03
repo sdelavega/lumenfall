@@ -324,12 +324,21 @@ private class WallpaperPresentation(
             if (pauseWhenHidden) {
                 WebViewTimers.setNeedsTimers(this, wv, true)
                 wv.evaluateJavascript("window.aetherDesk && window.aetherDesk.system.resume();", null)
+                // Re-arm with a fresh window (start() resets the last-seen
+                // clock) so the bundle isn't judged on its paused past.
+                if (!failed) watchdog.start()
             }
         } else {
             wv.onPause()
             if (pauseWhenHidden) {
                 wv.evaluateJavascript("window.aetherDesk && window.aetherDesk.system.suspend();", null)
                 WebViewTimers.setNeedsTimers(this, wv, false)
+                // A paused bundle can't tick — silence while hidden isn't a
+                // hang. Without this, any engine surviving covered for >30s
+                // (OEM-dependent; they're often destroyed instead) would be
+                // falsely demoted. Found by the reliability soak: a 19s
+                // hidden-tick gap was innocent, but 30s wouldn't have been.
+                watchdog.stop()
             }
         }
     }
