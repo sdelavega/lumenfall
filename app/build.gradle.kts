@@ -1,3 +1,4 @@
+import java.util.Properties
 import org.gradle.api.tasks.Exec
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -5,6 +6,15 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+
+// Release signing identity. `keystore.properties` + `release.jks` live at the
+// repo root and are gitignored — the keystore is the app's permanent identity,
+// so it must be backed up privately, never committed. When absent (fresh
+// checkout, CI), release builds fall back to the debug key so they still
+// assemble; they just aren't shippable.
+val keystoreProps: Properties? = rootProject.file("keystore.properties")
+    .takeIf { it.exists() }
+    ?.let { f -> Properties().apply { f.inputStream().use { load(it) } } }
 
 // --- Rust native core (cargo-ndk) -----------------------------------------
 // The Rust workspace (rootProject) builds `liblumenfall_core.so`, which the
@@ -39,6 +49,33 @@ android {
     // The cargo-ndk task writes lib*.so here in per-ABI subdirs; treat it as a
     // jniLibs source so the normal merge/packaging picks it up.
     sourceSets["main"].jniLibs.srcDir(rustJniLibs)
+
+    signingConfigs {
+        if (keystoreProps != null) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            signingConfig = if (keystoreProps != null) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
+        }
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

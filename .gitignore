@@ -4,6 +4,8 @@
 .claude/
 .DS_Store
 local.properties
+keystore.properties
+*.jks
 build/
 */build/
 target/
