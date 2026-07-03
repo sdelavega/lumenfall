@@ -379,7 +379,7 @@ class BundleSettingsActivity : AppCompatActivity() {
         WebViewTimers.setNeedsTimers(this, wv, true)
         wv.loadUrl("${BundleWebView.APP_ORIGIN}/bundles/$bundleId/$entryPath")
         PropertyBus.register(this, bundleId) { key, value ->
-            BundleWebView.pushProperty(wv, key, value)
+            BundleWebView.pushPropertyDebounced(wv, key, value)
         }
         preview = wv
 
@@ -438,6 +438,7 @@ class BundleSettingsActivity : AppCompatActivity() {
     override fun onDestroy() {
         governor?.stop()
         PropertyBus.unregister(this)
+        preview?.let { BundleWebView.flushPendingProperties(it) }
         preview?.let { WebViewTimers.forget(this, it) }
         preview?.destroy()
         preview = null

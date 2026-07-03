@@ -48,6 +48,7 @@ object BundleWebView {
     const val DEFAULT_FPS_CAP = 30
     const val MIN_FPS = 15
     const val MAX_FPS = 60
+    const val DEBOUNCE_MS = 50L
 
     fun create(
         context: Context,
@@ -214,6 +215,63 @@ object BundleWebView {
         val js = "window.aetherDesk && window.aetherDesk._setProperty(" +
             "${JSONObject.quote(key)}, ${jsLiteral(value)});"
         webView.evaluateJavascript(js, null)
+    }
+
+    // --- Debounced property push ---------------------------------------------
+    // A slider drag fires PropertyBus.notify once per step — up to 60/s. Each
+    // notify would otherwise trigger a separate evaluateJavascript call.
+    // Debounce accumulates pending updates and flushes them in one JS eval
+    // after a short idle window (ported from ÆtherDesk's PropertyBridge, which
+    // uses the same pattern at 50ms).
+
+    private data class DebounceState(
+        val pending: MutableMap<String, Any?> = mutableMapOf(),
+        var flushRunnable: Runnable? = null
+    )
+
+    private val debounceStates = java.util.WeakHashMap<WebView, DebounceState>()
+    private val debounceHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /**
+     * Push a property change with a short debounce. Multiple changes within
+     * [DEBOUNCE_MS] are batched into a single [pushProperty] call. Use this for
+     * high-frequency live updates (slider drags); use [pushProperty] directly
+     * for one-shot changes where the debounce delay would be noticeable.
+     */
+    fun pushPropertyDebounced(webView: WebView, key: String, value: Any?) {
+        val state = debounceStates.getOrPut(webView) { DebounceState() }
+        state.pending[key] = value
+        state.flushRunnable?.let { debounceHandler.removeCallbacks(it) }
+        val runnable = Runnable {
+            val snapshot = state.pending.toMap()
+            state.pending.clear()
+            state.flushRunnable = null
+            if (snapshot.isNotEmpty()) flushProperties(webView, snapshot)
+        }
+        state.flushRunnable = runnable
+        debounceHandler.postDelayed(runnable, DEBOUNCE_MS)
+    }
+
+    /** Flush any pending debounced updates immediately (before teardown/pause). */
+    fun flushPendingProperties(webView: WebView) {
+        val state = debounceStates[webView] ?: return
+        state.flushRunnable?.let { debounceHandler.removeCallbacks(it) }
+        state.flushRunnable = null
+        val snapshot = state.pending.toMap()
+        state.pending.clear()
+        if (snapshot.isNotEmpty()) flushProperties(webView, snapshot)
+    }
+
+    private fun flushProperties(webView: WebView, updates: Map<String, Any?>) {
+        if (updates.isEmpty()) return
+        val sb = StringBuilder("(function(){")
+        updates.forEach { (key, value) ->
+            sb.append("window.aetherDesk && window.aetherDesk._setProperty(")
+            sb.append(JSONObject.quote(key)).append(", ").append(jsLiteral(value))
+            sb.append(");")
+        }
+        sb.append("})();")
+        webView.evaluateJavascript(sb.toString(), null)
     }
 
     /** A JS literal for a property value pushed from native. */

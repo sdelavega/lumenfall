@@ -419,9 +419,9 @@ private class WallpaperPresentation(
         webView?.loadUrl(url)
     }
 
-    /** Push one property change into the running bundle. */
+    /** Push one property change into the running bundle (debounced). */
     fun setProperty(key: String, value: Any?) {
-        webView?.let { BundleWebView.pushProperty(it, key, value) }
+        webView?.let { BundleWebView.pushPropertyDebounced(it, key, value) }
     }
 
     /**
@@ -504,6 +504,7 @@ private class WallpaperPresentation(
     override fun dismiss() {
         watchdog.stop()
         webView?.let {
+            BundleWebView.flushPendingProperties(it)
             it.stopLoading()
             WebViewTimers.forget(this, it)
             (it.parent as? ViewGroup)?.removeView(it)
