@@ -510,6 +510,7 @@ class BundleSettingsActivity : AppCompatActivity() {
 
     private fun colorControl(p: BundleProperty, current: Any?): View {
         val initial = (current as? String) ?: "#ffffff"
+        val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -525,21 +526,45 @@ class BundleSettingsActivity : AppCompatActivity() {
             setPadding(dp(12), dp(8), dp(12), dp(8))
             layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
         }
-        val watcher = edit.afterTextChanged { text ->
+        // The picker proper: collapsed until the swatch is tapped, applies live
+        // while dragging (same convention as slider drags).
+        val picker = HsvColorPickerView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(190)).apply { topMargin = dp(12) }
+            visibility = View.GONE
+            runCatching { setColor(Color.parseColor(initial)) }
+        }
+        lateinit var watcher: TextWatcher
+        picker.onColorChanged = { c ->
+            val hex = String.format("#%06x", c and 0xFFFFFF)
+            swatch.setBackgroundColor(c)
+            edit.setTextSilently(watcher, hex)
+            apply(p.key, hex)
+        }
+        watcher = edit.afterTextChanged { text ->
             runCatching {
                 val c = Color.parseColor(text)
                 swatch.setBackgroundColor(c)
+                picker.setColor(c)
                 apply(p.key, text)
             }
+        }
+        swatch.setOnClickListener {
+            picker.visibility = if (picker.visibility == View.GONE) View.VISIBLE else View.GONE
         }
         liveControls[p.key] = { v ->
             val hex = (v as? String) ?: "#ffffff"
             edit.setTextSilently(watcher, hex)
-            runCatching { swatch.setBackgroundColor(Color.parseColor(hex)) }
+            runCatching {
+                val c = Color.parseColor(hex)
+                swatch.setBackgroundColor(c)
+                picker.setColor(c)
+            }
         }
         row.addView(swatch)
         row.addView(edit)
-        return row
+        column.addView(row)
+        column.addView(picker)
+        return column
     }
 
     private fun textControl(p: BundleProperty, current: Any?): View {
