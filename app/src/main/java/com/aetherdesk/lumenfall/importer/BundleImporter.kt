@@ -36,6 +36,23 @@ class BundleImporter(context: Context) {
                 ?: return fail(dir, "Could not validate bundle")
             if (!validation.ok) return fail(dir, validation.error ?: "Bundle is not supported")
 
+            // Web bundles run third-party script, so screen the collected JS/HTML
+            // source through the Rust heuristics (trackers, miners, resource
+            // hogs). Rejection aborts the import with the Rust-provided reason;
+            // a "limited" verdict is persisted so the web renderer clamps FPS
+            // and rate-limits network for this bundle.
+            var screeningEnvelope: String? = null
+            if (validation.kind == "web") {
+                val envelope = LumenfallCore.screenBundle(collectScriptSource(dir))
+                val report = JSONObject(envelope)
+                if (report.optString("classification") == "rejected") {
+                    val issues = report.optJSONArray("issues")
+                        ?.let { arr -> (0 until arr.length()).joinToString("; ") { arr.getString(it) } }
+                    return fail(dir, "Blocked at import: ${issues ?: "failed content screening"}")
+                }
+                screeningEnvelope = envelope
+            }
+
             val meta = BundleMeta(
                 id = id,
                 title = validation.title.ifBlank { fallbackName },
@@ -46,6 +63,7 @@ class BundleImporter(context: Context) {
                 importedAt = System.currentTimeMillis()
             )
             store.saveMeta(meta)
+            screeningEnvelope?.let { store.saveScreeningEnvelope(id, it) }
 
             // Optional: configurable properties (LivelyProperties.json, next to
             // LivelyInfo.json). Parsed by the Rust core; absent is fine.
@@ -67,6 +85,33 @@ class BundleImporter(context: Context) {
     private fun fail(dir: File, message: String): Result {
         dir.deleteRecursively()
         return Result.Error(message)
+    }
+
+    /**
+     * Concatenates every .js/.html/.htm file in the bundle (per-file and total
+     * caps so a hostile bundle can't OOM the import) — the input the Rust
+     * screener inspects. Mirrors ÆtherDesk's collectAllScriptSource.
+     */
+    private fun collectScriptSource(dir: File): String {
+        val sb = StringBuilder()
+        dir.walkTopDown()
+            .filter { it.isFile && it.extension.lowercase() in SCRIPT_EXTENSIONS }
+            .forEach { file ->
+                if (sb.length >= TOTAL_SCRIPT_CAP) return@forEach
+                runCatching {
+                    file.inputStream().use { input ->
+                        val bytes = input.readNBytes(PER_FILE_SCRIPT_CAP)
+                        sb.append(String(bytes, Charsets.UTF_8)).append('\n')
+                    }
+                }
+            }
+        return sb.toString()
+    }
+
+    private companion object {
+        val SCRIPT_EXTENSIONS = setOf("js", "html", "htm")
+        const val PER_FILE_SCRIPT_CAP = 1_000_000 // 1 MB, matches AetherDesk
+        const val TOTAL_SCRIPT_CAP = 8_000_000
     }
 
     private data class Validation(

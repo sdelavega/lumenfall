@@ -120,10 +120,52 @@ class BundleStore(context: Context) {
         return out
     }
 
+    // --- Screening (Rust screenBundle report, web bundles only) -----------------
+
+    private fun screeningFile(id: String) = File(bundleDir(id), SCREENING_NAME)
+
+    /** Persist the Rust `screenBundle` envelope for later reads. */
+    fun saveScreeningEnvelope(id: String, envelope: String) =
+        screeningFile(id).writeText(envelope)
+
+    /**
+     * The screening result for a bundle, or null when none was recorded (non-web
+     * kinds, or bundles imported before screening existed — treated as limited
+     * by the web renderer, the conservative default).
+     */
+    fun screening(id: String): BundleScreening? =
+        runCatching { BundleScreening.fromJson(screeningFile(id).readText()) }.getOrNull()
+
     companion object {
         const val META_NAME = "bundle.json"
         const val PROPS_NAME = "properties.json"
         const val OVERRIDES_NAME = "overrides.json"
+        const val SCREENING_NAME = "screening.json"
         private const val KEY_ACTIVE = "active_bundle_id"
+    }
+}
+
+/** Parsed `screening.json` — the Rust screenBundle envelope. */
+data class BundleScreening(
+    val classification: String, // allowed | limited | rejected
+    val warnings: List<String>,
+    val fpsCap: Int,
+    val networkBudgetPerMinute: Int
+) {
+    val limited: Boolean get() = classification != "allowed"
+
+    companion object {
+        fun fromJson(text: String): BundleScreening {
+            val o = JSONObject(text)
+            val warnings = o.optJSONArray("warnings")
+                ?.let { arr -> (0 until arr.length()).map { arr.getString(it) } }
+                ?: emptyList()
+            return BundleScreening(
+                classification = o.optString("classification", "limited"),
+                warnings = warnings,
+                fpsCap = o.optInt("fps_cap", 30),
+                networkBudgetPerMinute = o.optInt("network_budget_per_minute", 5)
+            )
+        }
     }
 }
