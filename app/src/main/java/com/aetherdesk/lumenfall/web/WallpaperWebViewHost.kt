@@ -2,9 +2,12 @@ package com.aetherdesk.lumenfall.web
 
 import android.app.Presentation
 import android.content.Context
+import android.graphics.Color
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.Display
 import android.view.SurfaceHolder
@@ -30,6 +33,16 @@ import com.aetherdesk.lumenfall.render.WallpaperRenderer
  * the bridge at document-start so a bundle reads its config before its first
  * script runs. [setProperty] pushes a live change into the running bundle.
  *
+ * Failure handling (ported from ÆtherDesk's WatchdogTimer): a bundle that hangs
+ * ([WallpaperWatchdog] — no bridge tick for 30s), whose renderer process dies,
+ * or whose main frame fails to load twice (one retry) is a one-way trip to a
+ * static fallback color — a live wallpaper has no crash UI, so silently
+ * demoting beats leaving a frozen or black surface forever, and re-attempting
+ * a bundle that already hung risks hanging again the same way. A fresh
+ * attempt only happens when this host is recreated (wallpaper reselected, or
+ * the engine is torn down and rebuilt, which already happens somewhat often —
+ * see the settings-Activity note elsewhere in this file's callers).
+ *
  * All calls must happen on the main thread (Engine callbacks already are).
  */
 class WallpaperWebViewHost(
@@ -52,6 +65,8 @@ class WallpaperWebViewHost(
     private var virtualDisplay: VirtualDisplay? = null
     private var presentation: WallpaperPresentation? = null
     private var pendingUrl: String? = null
+    private var lastSurfaceHolder: SurfaceHolder? = null
+    private var failed = false
 
     /** Queue (or immediately load) the bundle entry point. */
     fun load(url: String) {
@@ -66,6 +81,11 @@ class WallpaperWebViewHost(
 
     override fun onSurface(holder: SurfaceHolder, width: Int, height: Int) {
         if (width <= 0 || height <= 0) return
+        lastSurfaceHolder = holder
+        if (failed) {
+            renderFallback(holder)
+            return
+        }
         val existing = virtualDisplay
         if (existing == null) {
             attach(holder, width, height)
@@ -103,7 +123,8 @@ class WallpaperWebViewHost(
             initiallySuspended = initiallySuspended,
             pauseWhenHidden = pauseWhenHidden,
             onHeartbeat = onHeartbeat,
-            onLog = onLog
+            onLog = onLog,
+            onIrrecoverable = ::markFailed
         )
         pendingUrl?.let(pres::load)
         try {
@@ -119,6 +140,26 @@ class WallpaperWebViewHost(
             return
         }
         presentation = pres
+    }
+
+    /** A bundle that's hung, crashed the renderer, or failed to load twice — demote for good. */
+    private fun markFailed() {
+        if (failed) return
+        failed = true
+        onLog("bundle unrecoverable; showing static fallback")
+        detach()
+        lastSurfaceHolder?.let(::renderFallback)
+    }
+
+    private fun renderFallback(holder: SurfaceHolder) {
+        val frame = holder.surfaceFrame
+        if (frame.width() <= 0 || frame.height() <= 0) return
+        val canvas = runCatching { holder.lockCanvas() }.getOrNull() ?: return
+        try {
+            canvas.drawColor(FALLBACK_COLOR)
+        } finally {
+            holder.unlockCanvasAndPost(canvas)
+        }
     }
 
     override fun setVisible(visible: Boolean) {
@@ -143,6 +184,10 @@ class WallpaperWebViewHost(
     private companion object {
         const val TAG = "LumenfallWebHost"
         const val VIRTUAL_DISPLAY_NAME = "lumenfall-wallpaper"
+
+        // Matches the glass UI's dark backdrop, so a demoted wallpaper reads
+        // as "quiet," not as a broken/error surface.
+        val FALLBACK_COLOR = Color.parseColor("#0B0F1A")
     }
 }
 
@@ -150,6 +195,12 @@ class WallpaperWebViewHost(
  * The [Presentation] that actually owns the [WebView]. The WebView is created
  * with the presentation's display context so its rendering lands on the virtual
  * display (= the wallpaper surface).
+ *
+ * Owns the recovery policy for the three failure modes [BundleWebView] reports,
+ * mirroring ÆtherDesk: a hang or a dead renderer process demote immediately
+ * (no retry — re-showing a bundle that just hung risks hanging again the same
+ * way); a main-frame load failure gets one retry, and only demotes if the
+ * retry also fails.
  */
 private class WallpaperPresentation(
     outerContext: Context,
@@ -162,11 +213,18 @@ private class WallpaperPresentation(
     private val initiallySuspended: Boolean,
     private val pauseWhenHidden: Boolean,
     private val onHeartbeat: () -> Unit,
-    private val onLog: (String) -> Unit
+    private val onLog: (String) -> Unit,
+    private val onIrrecoverable: () -> Unit
 ) : Presentation(outerContext, targetDisplay) {
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val watchdog = WallpaperWatchdog(onHang = { handleFailure("no response for 30s") })
+    private val retryTimeoutRunnable = Runnable { handleFailure("retry did not finish loading") }
 
     private var webView: WebView? = null
     private var pendingUrl: String? = null
+    private var navRetried = false
+    private var failed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -178,8 +236,14 @@ private class WallpaperPresentation(
             blockExternalNetwork = blockExternalNetwork,
             allowLan = allowLan,
             initiallySuspended = initiallySuspended,
-            onHeartbeat = onHeartbeat,
-            onLog = onLog
+            onHeartbeat = { watchdog.poke(); onHeartbeat() },
+            onLog = { message ->
+                if (message.contains("\"tick\"")) watchdog.poke()
+                onLog(message)
+            },
+            onPageLoaded = { watchdog.poke(); mainHandler.removeCallbacks(retryTimeoutRunnable) },
+            onRenderProcessGone = ::handleRenderProcessGone,
+            onMainFrameLoadFailed = ::handleLoadFailure
         ).apply {
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -188,14 +252,19 @@ private class WallpaperPresentation(
         }
         setContentView(wv)
         webView = wv
+        // Unconditionally claim "needs timers" the moment this WebView is
+        // created — regardless of pauseWhenHidden. WebViewTimers is a single
+        // process-shared latch: if the previous engine's teardown (a wallpaper
+        // switch tears the old one down right as the new one spins up) left it
+        // paused, a brand-new WebView created into that state runs its JS with
+        // timers frozen from birth — no shim init, no ticks, nothing — and
+        // just sits there until something notices. setContentVisible(false)
+        // relinquishes this claim correctly once real visibility is known;
+        // starting from "assume alive" is the safe default; starting from
+        // "maybe already paused" is how a bundle silently never starts.
+        WebViewTimers.setNeedsTimers(this, wv, true)
         pendingUrl?.let(wv::loadUrl)
-        if (!pauseWhenHidden) {
-            // This engine never wants its timers paused on hide — hold a
-            // permanent claim so a stale pause latch left by a prior engine
-            // (WebViewTimers is process-shared) can't leave this WebView
-            // silently frozen before the first onVisibilityChanged(true).
-            WebViewTimers.setNeedsTimers(this, wv, true)
-        }
+        watchdog.start()
     }
 
     fun load(url: String) {
@@ -233,7 +302,48 @@ private class WallpaperPresentation(
         }
     }
 
+    /** The renderer sandbox process died; this WebView instance is unusable now. */
+    private fun handleRenderProcessGone() {
+        if (failed) return
+        webView?.let {
+            WebViewTimers.forget(this, it)
+            (it.parent as? ViewGroup)?.removeView(it)
+            runCatching { it.destroy() }
+        }
+        webView = null
+        handleFailure("renderer process gone")
+    }
+
+    private fun handleLoadFailure() {
+        if (failed) return
+        if (navRetried) {
+            mainHandler.removeCallbacks(retryTimeoutRunnable)
+            handleFailure("main-frame load failed after retry")
+            return
+        }
+        val url = pendingUrl
+        if (url == null) {
+            handleFailure("main-frame load failed, no URL to retry")
+            return
+        }
+        navRetried = true
+        onLog("main-frame load failed; retrying once")
+        webView?.loadUrl(url)
+        mainHandler.postDelayed(retryTimeoutRunnable, RETRY_TIMEOUT_MS)
+    }
+
+    private fun handleFailure(reason: String) {
+        if (failed) return
+        failed = true
+        onLog("bundle unrecoverable ($reason)")
+        watchdog.stop()
+        mainHandler.removeCallbacks(retryTimeoutRunnable)
+        onIrrecoverable()
+    }
+
     override fun dismiss() {
+        watchdog.stop()
+        mainHandler.removeCallbacks(retryTimeoutRunnable)
         webView?.let {
             it.stopLoading()
             WebViewTimers.forget(this, it)
@@ -242,5 +352,9 @@ private class WallpaperPresentation(
         }
         webView = null
         super.dismiss()
+    }
+
+    private companion object {
+        const val RETRY_TIMEOUT_MS = 10_000L
     }
 }

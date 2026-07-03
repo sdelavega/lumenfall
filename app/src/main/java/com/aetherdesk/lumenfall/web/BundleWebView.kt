@@ -2,6 +2,8 @@ package com.aetherdesk.lumenfall.web
 
 import android.content.Context
 import android.graphics.Color
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -27,7 +29,12 @@ import java.io.File
  *   derived budget plus the global Performance settings' blockExternalNetwork/
  *   allowLan) and refuses main-frame navigation off the bundle origin;
  * - injects the ÆtherDesk bridge (properties, fps-capped rAF, raw-IP WebSocket
- *   guard) at document-start where supported, post-load otherwise.
+ *   guard) at document-start where supported, post-load otherwise;
+ * - reports renderer-process death and main-frame load failures instead of
+ *   silently going dark (or, for process death specifically, taking this
+ *   app's whole process down with it — see [onRenderProcessGone] below).
+ *   Callers that want recovery (retry, fallback content) wire up the hooks;
+ *   this factory only reports, it doesn't decide policy.
  */
 object BundleWebView {
 
@@ -50,7 +57,10 @@ object BundleWebView {
         allowLan: Boolean = false,
         initiallySuspended: Boolean = false,
         onHeartbeat: () -> Unit = {},
-        onLog: (String) -> Unit = {}
+        onLog: (String) -> Unit = {},
+        onPageLoaded: () -> Unit = {},
+        onRenderProcessGone: () -> Unit = {},
+        onMainFrameLoadFailed: () -> Unit = {}
     ): WebView {
         val bundlesDir = File(context.filesDir, "bundles").apply { mkdirs() }
         val assetLoader = WebViewAssetLoader.Builder()
@@ -118,6 +128,27 @@ object BundleWebView {
 
                 override fun onPageFinished(view: WebView, url: String) {
                     if (!docStartSupported) view.evaluateJavascript(shim, null)
+                    onPageLoaded()
+                }
+
+                // The renderer sandbox process died (crashed, or killed by the
+                // system under memory pressure) — the WebView instance is now
+                // unusable. Returning true tells Android we've handled it;
+                // returning false (the default if unoverridden) kills this
+                // app's whole process, which for a live wallpaper with no
+                // crash UI is a much worse failure than a caller-managed
+                // recovery. The caller must not reuse this WebView afterward.
+                override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                    onLog("renderer process gone (crashed=${detail.didCrash()})")
+                    onRenderProcessGone()
+                    return true
+                }
+
+                override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                    if (request.isForMainFrame) {
+                        onLog("main-frame load error: ${error.description} (${error.errorCode})")
+                        onMainFrameLoadFailed()
+                    }
                 }
             }
         }
