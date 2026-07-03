@@ -199,6 +199,30 @@ WatchdogTimer):
   against, since real-world hangs are far more likely to be a stalled fetch
   or a slow loop with actual yield points than a hand-authored `for(;;){}`.
 
+Thumbnail auto-generation (DONE, 2026-07-03 — ported from ÆtherDesk; second
+of the porting recommendations, after the watchdog):
+
+- `web/BundleThumbnailer` backfills a picker preview for any bundle that
+  didn't declare one, per kind: image bundles point `previewPath` at the
+  entry itself; video bundles get a `MediaMetadataRetriever` frame from
+  ~1s in; web bundles actually *run* offscreen for a few seconds and get
+  snapshotted — a VirtualDisplay backed by an ImageReader surface (the
+  wallpaper host's Presentation technique pointed at a capturable surface,
+  since `View.draw()` can't see hardware-composited WebGL/canvas), using
+  the same sandboxed `BundleWebView` construction as the real renderers,
+  at the 15 fps floor. Capture fires 3s after page load; gives up at 12s,
+  on renderer death, or on main-frame load failure, writing a marker file
+  so a broken bundle isn't retried on every refresh.
+- The generated JPEG lives in the bundle dir under a dot-prefixed name
+  (`.lumenfall-thumb.jpg`) so it can't collide with bundle content.
+  `MainActivity` drains missing thumbnails one at a time on each picker
+  refresh (a concurrent second WebView capture would just add memory
+  pressure), re-rendering the list as each lands.
+- Verified on-device for all three kinds. The web capture doubled as a
+  sandbox check: the probe bundle's HUD in the captured thumbnail shows
+  the reduced fps cap applied and its tracker/metadata/raw-IP probes
+  blocked, proving policy enforcement is active during thumbnailing too.
+
 The Android runtime should not try to share Swift code with ÆtherDesk. The
 portable contract is the data shape: Lively metadata, property definitions,
 property overrides, validation rules, and the JavaScript bridge semantics.
