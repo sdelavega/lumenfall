@@ -122,6 +122,11 @@ object BundleWebView {
                     "aetherDeskGeo"
                 )
             }
+            // WebSocket DNS-rebinding guard: always registered for every web
+            // bundle. Android's shouldInterceptRequest can't reach WebSocket
+            // connections, so without this a hostname resolving to a private/
+            // metadata IP would bypass the network policy entirely.
+            addJavascriptInterface(WebSocketGuard(this), "aetherDeskWebSocket")
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(
                     view: WebView,
@@ -311,18 +316,119 @@ object BundleWebView {
             return 0;
           };
 
+          // --- WebSocket: raw-IP block (shim) + DNS-rebinding validation (native) ---
+          // Android's shouldInterceptRequest doesn't cover WebSocket, so the
+          // network policy can't reach sockets. The shim rejects raw-IP literals
+          // synchronously (no DNS round-trip needed); FQDN sockets go through a
+          // BridgeWebSocket proxy that asks the native guard to resolve the
+          // host and reject any resolved IP that's private/loopback/metadata
+          // (DNS rebinding). The real socket is created only after validation
+          // passes; sends are queued until then.
           var _OrigWS = window.WebSocket;
           if (typeof _OrigWS === 'function') {
             var RAW_IP = /^wss?:\/\/(\[|\d{1,3}(\.\d{1,3}){3}([\/:]|${'$'}))/i;
-            window.WebSocket = function (url, protocols) {
+            var _pendingWS = {};
+            var _wsId = 0;
+
+            function _wsFail(ws, msg) {
+              ws.readyState = 3; // CLOSED
+              try { if (ws.onerror) ws.onerror({ message: msg, type: 'error' }); } catch(e) {}
+            }
+
+            function BridgeWebSocket(url, protocols) {
+              this._url = url;
+              this._protocols = protocols;
+              this._real = null;
+              this._sendQueue = [];
+              this.url = url;
+              this.readyState = 0; // CONNECTING
+              this.bufferedAmount = 0;
+              this.extensions = '';
+              this.protocol = '';
+              this.onopen = null;
+              this.onmessage = null;
+              this.onclose = null;
+              this.onerror = null;
+              this.binaryType = 'blob';
+
               if (RAW_IP.test(String(url))) {
-                throw new DOMException('WebSocket to raw IP blocked', 'SecurityError');
+                var self = this;
+                setTimeout(function() { _wsFail(self, 'WebSocket to raw IP blocked'); }, 0);
+                return;
               }
-              return protocols === undefined ? new _OrigWS(url) : new _OrigWS(url, protocols);
+
+              var id = ++_wsId;
+              this._id = id;
+              _pendingWS[id] = this;
+              try {
+                window.aetherDeskWebSocket.validate(String(id), String(url));
+              } catch(e) {
+                delete _pendingWS[id];
+                var s = this;
+                setTimeout(function() { _wsFail(s, 'WebSocket bridge unavailable'); }, 0);
+              }
+            }
+
+            BridgeWebSocket.CONNECTING = 0;
+            BridgeWebSocket.OPEN = 1;
+            BridgeWebSocket.CLOSING = 2;
+            BridgeWebSocket.CLOSED = 3;
+
+            BridgeWebSocket.prototype.send = function(data) {
+              if (this._real) {
+                this._real.send(data);
+              } else if (this.readyState === 0) {
+                this._sendQueue.push(data);
+              } else {
+                throw new Error('InvalidStateError: WebSocket is not open');
+              }
             };
-            window.WebSocket.prototype = _OrigWS.prototype;
-            ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'].forEach(function (k) {
-              window.WebSocket[k] = _OrigWS[k];
+
+            BridgeWebSocket.prototype.close = function(code, reason) {
+              if (this._real) this._real.close(code, reason);
+              this.readyState = 2; // CLOSING
+            };
+
+            window.aetherDesk._wsValidated = function(id, allowed) {
+              var ws = _pendingWS[id];
+              if (!ws) return;
+              delete _pendingWS[id];
+              if (!allowed) {
+                _wsFail(ws, 'WebSocket rejected by policy (DNS rebinding blocked)');
+                return;
+              }
+              var real;
+              try {
+                real = (ws._protocols !== undefined)
+                  ? new _OrigWS(ws._url, ws._protocols)
+                  : new _OrigWS(ws._url);
+              } catch(e) {
+                _wsFail(ws, String(e && e.message || e));
+                return;
+              }
+              ws._real = real;
+              real.onopen = function(e) {
+                ws.readyState = 1;
+                ws.protocol = real.protocol;
+                if (ws.onopen) ws.onopen(e);
+              };
+              real.onmessage = function(e) { if (ws.onmessage) ws.onmessage(e); };
+              real.onclose = function(e) {
+                ws.readyState = 3;
+                if (ws.onclose) ws.onclose(e);
+              };
+              real.onerror = function(e) {
+                ws.readyState = 3;
+                if (ws.onerror) ws.onerror(e);
+              };
+              for (var i = 0; i < ws._sendQueue.length; i++) real.send(ws._sendQueue[i]);
+              ws._sendQueue.length = 0;
+            };
+
+            window.WebSocket = BridgeWebSocket;
+            window.WebSocket.prototype = BridgeWebSocket.prototype;
+            ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'].forEach(function(k) {
+              window.WebSocket[k] = BridgeWebSocket[k];
             });
           }
 
