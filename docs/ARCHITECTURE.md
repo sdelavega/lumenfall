@@ -15,13 +15,17 @@ Lumenfall is split into these layers:
 6. `app/.../storage`: `BundleStore` — on-disk bundle dir (`filesDir/bundles/<id>/`,
    each with `bundle.json` metadata, `properties.json` (parsed LivelyProperties
    schema), and `overrides.json` (user-set values)) plus the active-bundle pointer.
-   `BundleProperty` models one configurable property.
+   `BundleProperty` models one configurable property. `AppSettingsStore` is the
+   separate, app-level counterpart — global Performance preferences (see below)
+   that apply to every wallpaper, not one bundle's overrides.
 7. `app/.../importer`: `BundleImporter` — zip-slip-guarded extraction of a Lively
    `.zip`, then `LivelyInfo.json` (and `LivelyProperties.json` when present) parsed
    via the Rust core into bundle metadata + property schema.
 8. `app/.../ui`: `MainActivity` — the bundle library/picker (SAF import, list,
-   select-active which opens the live-wallpaper preview); `BundleSettingsActivity`
-   — per-bundle property controls (slider/color/dropdown/checkbox/...).
+   select-active which opens the live-wallpaper preview) plus the global
+   Performance + About panes; `BundleSettingsActivity` — per-bundle property
+   controls (slider/color/dropdown/checkbox/...) and its live preview.
+   `GlassUi` is the shared styling toolkit both screens draw every control from.
 9. `app/.../render/PropertyBus`: process-local fan-out of live property changes
    from the settings UI to any concurrently-running renderer.
 
@@ -109,6 +113,21 @@ Settings UI (DONE, 2026-07-03):
   caused it (coalescing a whole slider drag into one revert target) or, when
   overload isn't attributable to a specific change, eases the live fps cap
   — a per-session easing, not persisted to the bundle's screening record.
+
+MainActivity (DONE, 2026-07-03): same responsive-split + glass-everywhere
+treatment as the settings screen — wallpapers/import on one side (left in
+landscape, top in portrait), a `Performance` + `About` pane on the other.
+`ui/GlassUi` is the shared toolkit both Activities draw controls from
+(panels, buttons, switches, spinners, a custom `confirmDialog` replacing
+`AlertDialog`, a custom `toast` overlay replacing system `Toast`) — no stock
+Android widget chrome appears anywhere in the app. The Performance pane
+edits `storage/AppSettingsStore` (six toggles ported from ÆtherDesk's
+Preferences > Performance tab: default FPS cap, respect Low Power Mode,
+pause when not visible, pause on battery, block external network, allow
+LAN), resolved once per render via `web/PerformancePolicy` — a snapshot at
+load time, not a live-reacting daemon, consistent with how import
+screening's limits already work. The UI says as much ("applies next time a
+wallpaper loads") so this isn't a surprise.
 
 The Android runtime should not try to share Swift code with ÆtherDesk. The
 portable contract is the data shape: Lively metadata, property definitions,
