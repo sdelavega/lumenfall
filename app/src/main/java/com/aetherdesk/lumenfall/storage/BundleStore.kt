@@ -142,10 +142,29 @@ class BundleStore(context: Context) {
     /** Property defaults overlaid with user overrides — what the bridge gets. */
     fun effectiveValues(id: String): JSONObject {
         val out = JSONObject()
-        properties(id).forEach { p -> if (p.defaultValue != null) out.put(p.key, p.defaultValue) }
+        val props = properties(id)
         val ov = overrides(id)
-        ov.keys().forEach { k -> out.put(k, ov.get(k)) }
+        props.forEach { p ->
+            val value = if (ov.has(p.key)) ov.opt(p.key) else p.defaultValue
+            if (value != null) out.put(p.key, bridgeValue(p, value))
+        }
+        ov.keys().forEach { k ->
+            if (props.none { it.key == k }) out.put(k, ov.get(k))
+        }
         return out
+    }
+
+    private fun bridgeValue(property: BundleProperty, value: Any): Any {
+        if (!property.type.equals("folderDropdown", ignoreCase = true) || value !is String) {
+            return value
+        }
+        val folder = property.raw.optString("folder").trim().trim('/')
+        if (folder.isEmpty() || value.contains("/") || value.startsWith("blob:") ||
+            value.startsWith("data:") || value.startsWith("http://") || value.startsWith("https://")
+        ) {
+            return value
+        }
+        return "$folder/$value"
     }
 
     // --- Screening (Rust screenBundle report, web bundles only) -----------------

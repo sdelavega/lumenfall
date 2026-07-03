@@ -462,6 +462,14 @@ class BundleSettingsActivity : AppCompatActivity() {
 
     private fun controlFor(p: BundleProperty, current: Any?): View {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        if (p.type.equals("label", ignoreCase = true)) {
+            box.addView(TextView(this).apply {
+                text = (current ?: p.displayName).toString()
+                setTextColor(getColor(R.color.glass_text_primary))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            })
+            return box
+        }
         box.addView(TextView(this).apply {
             text = p.displayName
             setTextColor(getColor(R.color.glass_text_secondary))
@@ -473,11 +481,8 @@ class BundleSettingsActivity : AppCompatActivity() {
                 "slider" -> sliderControl(p, current)
                 "checkbox" -> switchControl(p, current)
                 "dropdown" -> dropdownControl(p, current)
+                "folderdropdown" -> folderDropdownControl(p, current)
                 "color" -> colorControl(p, current)
-                "label" -> TextView(this).apply {
-                    text = (current ?: "").toString()
-                    setTextColor(getColor(R.color.glass_text_secondary))
-                }
                 "button" -> MaterialButton(this).apply {
                     text = "Run"
                     setBackgroundColor(getColor(R.color.glass_field_fill))
@@ -575,6 +580,17 @@ class BundleSettingsActivity : AppCompatActivity() {
     private fun dropdownControl(p: BundleProperty, current: Any?): View {
         val itemsArr = p.raw.optJSONArray("items") ?: return textControl(p, current)
         val items = (0 until itemsArr.length()).map { itemsArr.optString(it) }
+        val valueIsString = p.defaultValue is String || current is String
+        fun selectedIndex(value: Any?): Int {
+            val rawIndex = when (value) {
+                is Number -> value.toInt()
+                is String -> items.indexOf(value)
+                else -> 0
+            }
+            return rawIndex.coerceIn(0, maxOf(0, items.size - 1))
+        }
+        fun valueFor(position: Int): Any =
+            if (valueIsString) items.getOrElse(position) { "" } else position
         lateinit var listener: AdapterView.OnItemSelectedListener
         val spinner = Spinner(this).apply {
             adapter = glassSpinnerAdapter(items)
@@ -585,20 +601,83 @@ class BundleSettingsActivity : AppCompatActivity() {
             listener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) {
                     if (skipFirst) { skipFirst = false; return }
-                    apply(p.key, position)
+                    apply(p.key, valueFor(position))
                 }
                 override fun onNothingSelected(parent: AdapterView<*>?) {}
             }
             onItemSelectedListener = listener
-            setSelection(((current as? Number)?.toInt() ?: 0).coerceIn(0, maxOf(0, items.size - 1)))
+            setSelection(selectedIndex(current))
         }
         liveControls[p.key] = { v ->
             spinner.onItemSelectedListener = null
-            spinner.setSelection(((v as? Number)?.toInt() ?: 0).coerceIn(0, maxOf(0, items.size - 1)))
+            spinner.setSelection(selectedIndex(v))
             spinner.onItemSelectedListener = listener
         }
         return spinner
     }
+
+    private fun folderDropdownControl(p: BundleProperty, current: Any?): View {
+        val values = folderDropdownValues(p)
+        if (values.isEmpty()) return textControl(p, current)
+        val labels = values.map { it.substringAfterLast('/') }
+        fun selectedIndex(value: Any?): Int {
+            val s = value as? String ?: return 0
+            val idx = values.indexOfFirst { it == s || it.substringAfterLast('/') == s }
+            return idx.coerceAtLeast(0)
+        }
+        lateinit var listener: AdapterView.OnItemSelectedListener
+        val spinner = Spinner(this).apply {
+            adapter = glassSpinnerAdapter(labels)
+            setBackgroundResource(R.drawable.glass_field_bg)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setPopupBackgroundResource(R.drawable.glass_popup_bg)
+            var skipFirst = true
+            listener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) {
+                    if (skipFirst) { skipFirst = false; return }
+                    apply(p.key, values.getOrElse(position) { "" })
+                }
+                override fun onNothingSelected(parent: AdapterView<*>?) {}
+            }
+            onItemSelectedListener = listener
+            setSelection(selectedIndex(current))
+        }
+        liveControls[p.key] = { v ->
+            spinner.onItemSelectedListener = null
+            spinner.setSelection(selectedIndex(v))
+            spinner.onItemSelectedListener = listener
+        }
+        return spinner
+    }
+
+    private fun folderDropdownValues(p: BundleProperty): List<String> {
+        val folder = p.raw.optString("folder").trim().trim('/')
+        if (folder.isEmpty()) return emptyList()
+        val names = if (BundledWallpapers.isBundled(bundleId)) {
+            val bundledFolder = BundledWallpapers.folderFor(bundleId) ?: return emptyList()
+            runCatching { assets.list("wallpapers/$bundledFolder/$folder")?.toList().orEmpty() }
+                .getOrDefault(emptyList())
+        } else {
+            runCatching { store.fileFor(bundleId, folder).list()?.toList().orEmpty() }
+                .getOrDefault(emptyList())
+        }
+        val extensions = folderDropdownExtensions(p.raw.optString("filter"))
+        return names
+            .filter { name ->
+                extensions.isEmpty() || extensions.contains(name.substringAfterLast('.', "").lowercase())
+            }
+            .sorted()
+            .map { "$folder/$it" }
+    }
+
+    private fun folderDropdownExtensions(filter: String): Set<String> =
+        filter.split('|')
+            .mapNotNull { pattern ->
+                pattern.substringAfterLast('.', missingDelimiterValue = "")
+                    .takeIf { it.isNotBlank() && !it.contains('*') }
+                    ?.lowercase()
+            }
+            .toSet()
 
     private fun glassSpinnerAdapter(items: List<String>): ArrayAdapter<String> =
         object : ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, items) {

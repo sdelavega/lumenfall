@@ -376,6 +376,30 @@ object BundleWebView {
             }
           };
 
+          var _initialReplayDone = false;
+          function _replayInitialProperties() {
+            if (_initialReplayDone || typeof window.livelyPropertyListener !== 'function') return false;
+            _initialReplayDone = true;
+            Object.keys(_props).forEach(function (key) {
+              try { window.livelyPropertyListener(key, _props[key]); } catch (e) {}
+            });
+            if (_propUpdateCb) {
+              try { _propUpdateCb(_props); } catch (e) {}
+            }
+            return true;
+          }
+          function _scheduleInitialReplay() {
+            setTimeout(_replayInitialProperties, 0);
+            setTimeout(_replayInitialProperties, 100);
+            setTimeout(_replayInitialProperties, 500);
+          }
+          document.addEventListener('DOMContentLoaded', _scheduleInitialReplay);
+          window.addEventListener('load', _scheduleInitialReplay);
+          var _replayAttempts = 0;
+          var _replayTimer = setInterval(function () {
+            if (_replayInitialProperties() || ++_replayAttempts >= 50) clearInterval(_replayTimer);
+          }, 100);
+
           function _notifyVisibility(visible) {
             if (_visibilityCb) {
               try { _visibilityCb(visible); } catch (e) {}

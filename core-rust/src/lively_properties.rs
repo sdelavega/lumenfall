@@ -15,7 +15,8 @@ pub struct LivelyPropertiesParser;
 
 impl LivelyPropertiesParser {
     pub fn parse(text: &str) -> Result<Vec<WallpaperProperty>> {
-        let value: Value = serde_json::from_str(text)?;
+        let value: Value = serde_json::from_str(text)
+            .or_else(|_| serde_json::from_str(&strip_json_comments(text)))?;
 
         // Format 1: {"properties": [...]} — wrapped array. The Lively desktop
         // app exports this shape by default (PascalCase keys: Name, Type,
@@ -37,6 +38,64 @@ impl LivelyPropertiesParser {
 
         Ok(Vec::new())
     }
+}
+
+fn strip_json_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut in_string = false;
+    let mut escaped = false;
+
+    while let Some(ch) = chars.next() {
+        if in_string {
+            out.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        if ch == '"' {
+            in_string = true;
+            out.push(ch);
+            continue;
+        }
+
+        if ch == '/' {
+            match chars.peek().copied() {
+                Some('/') => {
+                    chars.next();
+                    for next in chars.by_ref() {
+                        if next == '\n' {
+                            out.push('\n');
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                Some('*') => {
+                    chars.next();
+                    let mut prev = '\0';
+                    for next in chars.by_ref() {
+                        if prev == '*' && next == '/' {
+                            break;
+                        }
+                        prev = next;
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+        }
+
+        out.push(ch);
+    }
+
+    out
 }
 
 /// Parses the array formats (both wrapped `{"properties":[...]}` and bare
@@ -100,7 +159,9 @@ fn normalize_property(key: String, raw_obj: &Map<String, Value>) -> WallpaperPro
         .or_else(|| get_str(&raw, "name"))
         .unwrap_or_else(|| key.clone());
 
-    let property_type = get_str(&raw, "type").unwrap_or_else(|| "unknown".to_string());
+    let property_type = get_str(&raw, "type")
+        .map(|t| normalize_type(&t))
+        .unwrap_or_else(|| "unknown".to_string());
     let default_value = raw.get("value").cloned();
 
     WallpaperProperty {
@@ -109,6 +170,17 @@ fn normalize_property(key: String, raw_obj: &Map<String, Value>) -> WallpaperPro
         property_type,
         default_value,
         raw,
+    }
+}
+
+fn normalize_type(property_type: &str) -> String {
+    match property_type.to_ascii_lowercase().as_str() {
+        // Lively's exported array format uses "range" for numeric slider
+        // controls and "bool" for checkboxes. The Android UI consumes the
+        // normalized control vocabulary used by the per-key format.
+        "range" => "slider".to_string(),
+        "bool" | "boolean" => "checkbox".to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -216,7 +288,18 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(properties[0].property_type, "checkbox");
         assert_eq!(properties[0].default_value, Some(Value::from(true)));
+    }
+
+    #[test]
+    fn wrapped_array_range_property_normalizes_to_slider() {
+        let properties = LivelyPropertiesParser::parse(
+            r#"{"properties":[{"Name":"speed","Type":"range","Value":1,"Min":0,"Max":5,"Increment":0.5}]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(properties[0].property_type, "slider");
     }
 
     // ── Bare array format ──────────────────────────────────────────────────
@@ -263,6 +346,47 @@ mod tests {
         .unwrap();
 
         assert!(properties[0].raw.get("items").is_some());
+    }
+
+    #[test]
+    fn parses_lively_properties_with_comments() {
+        let properties = LivelyPropertiesParser::parse(
+            r##"{
+                // Lively bundled wallpapers sometimes contain JS-style comments.
+                "hillOpacityFac": {
+                    "max": 1000,
+                    "min": 0,
+                    "text": "Hill Opacity",
+                    "type": "slider",
+                    "value": 50
+                },
+                "url": {
+                    "type": "textbox",
+                    "value": "https://example.test/path"
+                },
+                /* Keep block comments out too. */
+                "timeToggle": {
+                    "type": "checkbox",
+                    "value": true
+                }
+            }"##,
+        )
+        .unwrap();
+
+        assert_eq!(properties.len(), 3);
+        let hill = properties
+            .iter()
+            .find(|p| p.key == "hillOpacityFac")
+            .unwrap();
+        let url = properties.iter().find(|p| p.key == "url").unwrap();
+        let time = properties.iter().find(|p| p.key == "timeToggle").unwrap();
+
+        assert_eq!(hill.display_name, "Hill Opacity");
+        assert_eq!(
+            url.default_value,
+            Some(Value::from("https://example.test/path"))
+        );
+        assert_eq!(time.property_type, "checkbox");
     }
 
     #[test]
