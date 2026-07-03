@@ -26,6 +26,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.aetherdesk.lumenfall.R
 import com.aetherdesk.lumenfall.importer.BundleImporter
+import com.aetherdesk.lumenfall.render.ActiveBundleBus
 import com.aetherdesk.lumenfall.service.LumenfallWallpaperService
 import com.aetherdesk.lumenfall.storage.AppSettingsStore
 import com.aetherdesk.lumenfall.storage.BundleMeta
@@ -344,11 +345,19 @@ class MainActivity : AppCompatActivity() {
     private fun setActiveAndPreview(meta: BundleMeta) {
         store.activeId = meta.id
         refresh()
+
+        // Already the live wallpaper? Swap in place — nudge any surviving
+        // engine now, and an engine recreated on next visibility reads the new
+        // active id anyway. No system chooser round-trip needed.
+        val ourComponent = ComponentName(this, LumenfallWallpaperService::class.java)
+        if (WallpaperManager.getInstance(this).wallpaperInfo?.component == ourComponent) {
+            ActiveBundleBus.notifyChanged()
+            toast("Now live: ${meta.title}")
+            return
+        }
+
         val intent = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER).apply {
-            putExtra(
-                WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT,
-                ComponentName(this@MainActivity, LumenfallWallpaperService::class.java)
-            )
+            putExtra(WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT, ourComponent)
         }
         try {
             startActivity(intent)

@@ -4,6 +4,7 @@ import android.service.wallpaper.WallpaperService
 import android.util.Log
 import android.view.SurfaceHolder
 import com.aetherdesk.lumenfall.image.ImageWallpaperRenderer
+import com.aetherdesk.lumenfall.render.ActiveBundleBus
 import com.aetherdesk.lumenfall.render.PropertyBus
 import com.aetherdesk.lumenfall.render.WallpaperRenderer
 import com.aetherdesk.lumenfall.storage.AppSettingsStore
@@ -22,31 +23,65 @@ class LumenfallWallpaperService : WallpaperService() {
         // failed. The Engine just forwards its lifecycle here.
         private var renderer: WallpaperRenderer? = null
 
+        // Last-known surface + visibility, so an in-place bundle swap can
+        // re-attach the fresh renderer without waiting for new callbacks.
+        private var lastHolder: SurfaceHolder? = null
+        private var lastWidth = 0
+        private var lastHeight = 0
+        private var lastVisible = false
+
         override fun onCreate(surfaceHolder: SurfaceHolder) {
             super.onCreate(surfaceHolder)
             renderer = createRenderer()
+            ActiveBundleBus.register(this, ::swapRenderer)
         }
 
         override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
             super.onSurfaceChanged(holder, format, width, height)
+            lastHolder = holder
+            lastWidth = width
+            lastHeight = height
             renderer?.onSurface(holder, width, height)
         }
 
         override fun onVisibilityChanged(visible: Boolean) {
             super.onVisibilityChanged(visible)
+            lastVisible = visible
             renderer?.setVisible(visible)
         }
 
         override fun onSurfaceDestroyed(holder: SurfaceHolder) {
             super.onSurfaceDestroyed(holder)
+            lastHolder = null
             renderer?.onSurfaceDestroyed()
         }
 
         override fun onDestroy() {
             super.onDestroy()
+            ActiveBundleBus.unregister(this)
             PropertyBus.unregister(this)
             renderer?.release()
             renderer = null
+        }
+
+        /**
+         * The picker changed the active bundle while this engine is alive:
+         * tear down the old renderer and stand up a fresh one for the new
+         * bundle on the same surface. (When the engine was instead destroyed
+         * under the picker Activity — the common case on this OEM — the next
+         * engine creation reads the new active id anyway; this path covers
+         * engines that survive, e.g. under multi-window or a floating picker.)
+         */
+        private fun swapRenderer() {
+            Log.d(TAG, "active bundle changed; swapping renderer in place")
+            PropertyBus.unregister(this) // webRenderer re-registers for the new bundle
+            renderer?.release()
+            renderer = createRenderer()
+            val holder = lastHolder
+            if (holder != null && lastWidth > 0 && lastHeight > 0) {
+                renderer?.onSurface(holder, lastWidth, lastHeight)
+                renderer?.setVisible(lastVisible)
+            }
         }
 
         /** Pick a renderer for the active bundle's kind, falling back to the spike. */
