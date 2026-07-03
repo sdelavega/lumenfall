@@ -61,6 +61,7 @@ class WallpaperWebViewHost(
     private val displayManager =
         context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
     private val densityDpi = context.resources.displayMetrics.densityDpi
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private var virtualDisplay: VirtualDisplay? = null
     private var presentation: WallpaperPresentation? = null
@@ -151,10 +152,30 @@ class WallpaperWebViewHost(
         lastSurfaceHolder?.let(::renderFallback)
     }
 
-    private fun renderFallback(holder: SurfaceHolder) {
+    /**
+     * Right after [detach] releases the virtual display, its disconnect from
+     * [holder]'s Surface is not synchronous — the producer handoff finishes
+     * async on the system side, and a [SurfaceHolder.lockCanvas] issued
+     * immediately after can return null (observed on-device: reproducibly
+     * null on the very first attempt, every time). Retry briefly instead of
+     * silently giving up, which previously left the surface showing stale
+     * (black) content forever instead of the fallback color. A handful of
+     * short retries comfortably covers the handoff; a surface that's still
+     * refusing after that is genuinely gone (e.g. actually destroyed), and
+     * onSurfaceDestroyed/a future onSurface will handle it correctly.
+     */
+    private fun renderFallback(holder: SurfaceHolder, attempt: Int = 0) {
         val frame = holder.surfaceFrame
         if (frame.width() <= 0 || frame.height() <= 0) return
-        val canvas = runCatching { holder.lockCanvas() }.getOrNull() ?: return
+        val canvas = runCatching { holder.lockCanvas() }.getOrNull()
+        if (canvas == null) {
+            if (attempt < MAX_LOCK_ATTEMPTS) {
+                mainHandler.postDelayed({ renderFallback(holder, attempt + 1) }, LOCK_RETRY_DELAY_MS)
+            } else {
+                onLog("renderFallback: lockCanvas kept returning null after $MAX_LOCK_ATTEMPTS retries")
+            }
+            return
+        }
         try {
             canvas.drawColor(FALLBACK_COLOR)
         } finally {
@@ -188,6 +209,12 @@ class WallpaperWebViewHost(
         // Matches the glass UI's dark backdrop, so a demoted wallpaper reads
         // as "quiet," not as a broken/error surface.
         val FALLBACK_COLOR = Color.parseColor("#0B0F1A")
+
+        // See renderFallback's kdoc: bridges the async virtual-display-release
+        // handoff. 5 * 30ms is comfortably more than the handoff has ever
+        // taken on-device (one retry has sufficed in testing).
+        const val MAX_LOCK_ATTEMPTS = 5
+        const val LOCK_RETRY_DELAY_MS = 30L
     }
 }
 
