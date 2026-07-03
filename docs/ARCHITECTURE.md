@@ -56,6 +56,29 @@ adjust-then-return flow the change actually lands via injection on the next engi
 creation; the live push only has an audience when an engine is concurrently
 visible (split-screen, etc.).
 
+Practical limits (DONE, 2026-07-03 — ported from ÆtherDesk so bundles behave
+identically on both hosts):
+
+- **Import screening** (`core-rust/bundle_screening.rs`, heuristics from
+  ÆtherDesk's WallpaperValidator): the importer concatenates a web bundle's
+  .js/.html source (1 MB/file, 8 MB total caps) and Rust classifies it.
+  Trackers/ad domains, crypto miners, ServiceWorker/SharedWorker,
+  `window.open`, `while(true)`, and >10 network call sites reject the import
+  with a reason; network use, eval-family, WebGL, and heavy-GPU patterns
+  downgrade to "limited" (persisted as `screening.json`).
+- **FPS cap** (web shim): `requestAnimationFrame` is throttled to
+  `aetherDesk.system.fpsCap` — default 30, clamped 15–60 — sleeping between
+  frames via setTimeout, and drops frames entirely while hidden. Measured on
+  device: a busy canvas holds ~30 fps on a 60–120 Hz panel.
+- **Network policy** (`web/WallpaperNetworkPolicy`, enforced in
+  `shouldInterceptRequest` since Android has no WKContentRuleList): ad /
+  analytics / miner domains and SSRF targets (raw IP literals, localhost,
+  `*.local`, metadata hosts, nip.io/sslip.io) are always blocked; bundles
+  screened "limited" (or imported before screening existed) also get a
+  5-req/min budget on external requests. Main-frame navigation off the bundle
+  origin is refused; the shim rejects WebSockets to raw IPs (sockets bypass
+  shouldInterceptRequest). Local asset-loader traffic is never filtered.
+
 The Android runtime should not try to share Swift code with ÆtherDesk. The
 portable contract is the data shape: Lively metadata, property definitions,
 property overrides, validation rules, and the JavaScript bridge semantics.
@@ -70,6 +93,7 @@ Current JNI shape:
 - Kotlin calls `LumenfallCore.parseLivelyInfo(json)`.
 - Kotlin calls `LumenfallCore.parseLivelyProperties(json)`.
 - Kotlin calls `LumenfallCore.validateBundle(infoJson, basePath, filesJson)`.
+- Kotlin calls `LumenfallCore.screenBundle(scriptSource)`.
 - Rust returns normalized JSON envelopes for now. That avoids duplicating the
   full model in Kotlin while the engine is still moving.
 
