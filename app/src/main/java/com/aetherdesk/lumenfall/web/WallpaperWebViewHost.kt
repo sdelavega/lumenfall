@@ -248,9 +248,7 @@ private class WallpaperPresentation(
     private val onIrrecoverable: () -> Unit
 ) : Presentation(outerContext, targetDisplay) {
 
-    private val mainHandler = Handler(Looper.getMainLooper())
     private val watchdog = WallpaperWatchdog(onHang = { handleFailure("no response for 30s") })
-    private val retryTimeoutRunnable = Runnable { handleFailure("retry did not finish loading") }
 
     private var webView: WebView? = null
     private var pendingUrl: String? = null
@@ -273,7 +271,7 @@ private class WallpaperPresentation(
                 if (message.contains("\"tick\"")) watchdog.poke()
                 onLog(message)
             },
-            onPageLoaded = { watchdog.poke(); mainHandler.removeCallbacks(retryTimeoutRunnable) },
+            onPageLoaded = { watchdog.poke() },
             onRenderProcessGone = ::handleRenderProcessGone,
             onMainFrameLoadFailed = ::handleLoadFailure
         ).apply {
@@ -355,10 +353,16 @@ private class WallpaperPresentation(
         handleFailure("renderer process gone")
     }
 
+    /**
+     * One retry, then demote. A retry that *stalls* (never errors, never
+     * finishes) is caught by the watchdog rather than a dedicated timer: the
+     * watchdog already pauses correctly while the wallpaper is hidden, whereas
+     * a plain countdown here would keep running against a bundle whose timers
+     * pauseWhenHidden froze mid-retry and falsely demote it.
+     */
     private fun handleLoadFailure() {
         if (failed) return
         if (navRetried) {
-            mainHandler.removeCallbacks(retryTimeoutRunnable)
             handleFailure("main-frame load failed after retry")
             return
         }
@@ -370,7 +374,6 @@ private class WallpaperPresentation(
         navRetried = true
         onLog("main-frame load failed; retrying once")
         webView?.loadUrl(url)
-        mainHandler.postDelayed(retryTimeoutRunnable, RETRY_TIMEOUT_MS)
     }
 
     private fun handleFailure(reason: String) {
@@ -378,13 +381,11 @@ private class WallpaperPresentation(
         failed = true
         onLog("bundle unrecoverable ($reason)")
         watchdog.stop()
-        mainHandler.removeCallbacks(retryTimeoutRunnable)
         onIrrecoverable()
     }
 
     override fun dismiss() {
         watchdog.stop()
-        mainHandler.removeCallbacks(retryTimeoutRunnable)
         webView?.let {
             it.stopLoading()
             WebViewTimers.forget(this, it)
@@ -393,9 +394,5 @@ private class WallpaperPresentation(
         }
         webView = null
         super.dismiss()
-    }
-
-    private companion object {
-        const val RETRY_TIMEOUT_MS = 10_000L
     }
 }

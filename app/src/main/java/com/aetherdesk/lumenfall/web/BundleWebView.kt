@@ -134,8 +134,21 @@ object BundleWebView {
                     if (blocked) onLog("blocked navigation to ${request.url}")
                 }
 
+                // Android fires onPageFinished even for a navigation that just
+                // failed — the WebView "finishes" rendering its internal error
+                // page. Reporting that as a successful load would hand callers
+                // fake liveness right after they were told the load failed
+                // (poking the wallpaper host's watchdog, or scheduling a
+                // thumbnail capture of the error page). Consume one finish per
+                // main-frame error instead.
+                private var mainFrameErrored = false
+
                 override fun onPageFinished(view: WebView, url: String) {
                     if (!docStartSupported) view.evaluateJavascript(shim, null)
+                    if (mainFrameErrored) {
+                        mainFrameErrored = false
+                        return
+                    }
                     onPageLoaded()
                 }
 
@@ -154,6 +167,7 @@ object BundleWebView {
 
                 override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                     if (request.isForMainFrame) {
+                        mainFrameErrored = true
                         onLog("main-frame load error: ${error.description} (${error.errorCode})")
                         onMainFrameLoadFailed()
                     }

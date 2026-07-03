@@ -143,9 +143,15 @@ WatchdogTimer):
   default if unoverridden, kills this app's whole process, not just the one
   WebView) demotes immediately to a static fallback color (`#0B0F1A`,
   matching the glass UI's backdrop); a main-frame load failure gets one
-  retry with a 10s timeout, demoting only if the retry also fails. A fresh
-  attempt only happens if the host itself is recreated (wallpaper
-  reselected, or the engine torn down and rebuilt).
+  retry, demoting if the retry also fails — a retry that *stalls* (never
+  errors, never finishes) is caught by the watchdog rather than a dedicated
+  timer, since the watchdog already pauses correctly while the wallpaper is
+  hidden. A fresh attempt only happens if the host itself is recreated
+  (wallpaper reselected, or the engine torn down and rebuilt). Note:
+  Android fires onPageFinished even for a failed navigation's internal
+  error page; BundleWebView consumes one finish per main-frame error so
+  error pages can't fake liveness to the watchdog or get captured as
+  thumbnails.
 - All three demotion paths (watchdog hang, render-process-gone, nav-retry-
   then-demote) are verified live on-device with isolated per-path repros:
   a JS busy-loop bundle for the watchdog; a bundle that grows its own JS

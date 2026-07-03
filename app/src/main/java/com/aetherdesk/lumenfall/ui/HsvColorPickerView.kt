@@ -1,6 +1,5 @@
 package com.aetherdesk.lumenfall.ui
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
@@ -123,7 +122,6 @@ class HsvColorPickerView(context: Context) : View(context) {
         canvas.drawCircle(x, y, r, thumbRing)
     }
 
-    @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -141,13 +139,24 @@ class HsvColorPickerView(context: Context) : View(context) {
                 applyTouch(event)
                 return true
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+            MotionEvent.ACTION_UP -> {
+                dragging = Region.NONE
+                parent?.requestDisallowInterceptTouchEvent(false)
+                performClick()
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
                 dragging = Region.NONE
                 parent?.requestDisallowInterceptTouchEvent(false)
                 return true
             }
         }
         return super.onTouchEvent(event)
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
     }
 
     private fun applyTouch(event: MotionEvent) {
