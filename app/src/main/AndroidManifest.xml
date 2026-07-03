@@ -3,6 +3,14 @@
         android:name="android.software.live_wallpaper"
         android:required="true" />
 
+    <!-- Geolocation for web wallpaper bundles that opt in (per-bundle toggle in
+         settings). Only fine location is requested, per the grant model chosen:
+         coarse wasn't precise enough for the map/sun-position style wallpapers
+         that want this. The bridge is only registered for bundles the import
+         screener classified "allowed" (not "limited"), so a bundle that trips
+         the screener's network/heavy-GPU heuristics never even sees the surface. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
     <application
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher"

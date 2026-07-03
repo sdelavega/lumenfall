@@ -57,6 +57,8 @@ class WallpaperWebViewHost(
     private val pauseWhenHidden: Boolean = true,
     /** When set, allowed external requests are recorded in [ContactedDomains]. */
     private val bundleId: String? = null,
+    /** Wire the geolocation bridge for this bundle (see [GeolocationPolicy]). */
+    private val allowGeolocation: Boolean = false,
     private val onHeartbeat: () -> Unit = {},
     private val onLog: (String) -> Unit = {}
 ) : WallpaperRenderer {
@@ -126,6 +128,7 @@ class WallpaperWebViewHost(
             initiallySuspended = initiallySuspended,
             pauseWhenHidden = pauseWhenHidden,
             bundleId = bundleId,
+            allowGeolocation = allowGeolocation,
             onHeartbeat = onHeartbeat,
             onLog = onLog,
             onIrrecoverable = ::markFailed
@@ -243,6 +246,7 @@ private class WallpaperPresentation(
     private val initiallySuspended: Boolean,
     private val pauseWhenHidden: Boolean,
     private val bundleId: String?,
+    private val allowGeolocation: Boolean,
     private val onHeartbeat: () -> Unit,
     private val onLog: (String) -> Unit,
     private val onIrrecoverable: () -> Unit
@@ -266,6 +270,7 @@ private class WallpaperPresentation(
             allowLan = allowLan,
             initiallySuspended = initiallySuspended,
             bundleId = bundleId,
+            allowGeolocation = allowGeolocation,
             onHeartbeat = { watchdog.poke(); onHeartbeat() },
             onLog = { message ->
                 if (message.contains("\"tick\"")) watchdog.poke()

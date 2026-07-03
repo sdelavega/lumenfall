@@ -3,6 +3,8 @@ package com.aetherdesk.lumenfall.ui
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -25,8 +27,10 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
+import androidx.core.content.ContextCompat
 import com.aetherdesk.lumenfall.R
 import com.aetherdesk.lumenfall.render.PropertyBus
 import com.aetherdesk.lumenfall.storage.AppSettingsStore
@@ -34,6 +38,7 @@ import com.aetherdesk.lumenfall.storage.BundleProperty
 import com.aetherdesk.lumenfall.storage.BundleStore
 import com.aetherdesk.lumenfall.web.BundleWebView
 import com.aetherdesk.lumenfall.web.ContactedDomains
+import com.aetherdesk.lumenfall.web.GeolocationPolicy
 import com.aetherdesk.lumenfall.web.PerformanceGovernor
 import com.aetherdesk.lumenfall.web.PerformancePolicy
 import com.aetherdesk.lumenfall.web.WebViewTimers
@@ -98,6 +103,25 @@ class BundleSettingsActivity : AppCompatActivity() {
 
     private data class PendingChange(val key: String, val previousValue: Any?, val atMs: Long)
 
+    // Geolocation permission request. A live wallpaper runs in the background
+    // and can't host a permission dialog, so the per-bundle toggle in this
+    // Activity is the only entry point that prompts. The toggle is only shown
+    // for web bundles the screener classified clean (not "limited"), so this
+    // prompt never fires for a screened-out bundle.
+    private var geoToggle: SwitchCompat? = null
+    private val requestLocationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            val toggle = geoToggle ?: return@registerForActivityResult
+            if (granted) {
+                store.setGeolocationEnabled(bundleId, true)
+                toast("Geolocation enabled for this bundle — applies next time it loads")
+            } else {
+                toggle.isChecked = false
+                store.setGeolocationEnabled(bundleId, false)
+                toast("Location permission denied — geolocation stays off")
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         bundleId = intent.getStringExtra(EXTRA_BUNDLE_ID) ?: return finish()
@@ -134,6 +158,9 @@ class BundleSettingsActivity : AppCompatActivity() {
             })
         } else {
             props.forEach { form.addView(glassPanel(controlFor(it, currentValues[it.key]))) }
+        }
+        if (meta?.kind == "web") {
+            form.addView(buildGeolocationSection(meta))
         }
         if (meta?.kind == "web") {
             // Network transparency, ported from ÆtherDesk: which external
@@ -247,6 +274,78 @@ class BundleSettingsActivity : AppCompatActivity() {
     }
 
     /**
+     * Per-bundle geolocation opt-in. Shown only for web bundles the import
+     * screener classified clean (not "limited") — a screened-out bundle never
+     * sees the geolocation surface at all, so the toggle is meaningless there
+     * and would only confuse. Default off; turning it on prompts for
+     * ACCESS_FINE_LOCATION (the wallpaper service itself can't prompt).
+     *
+     * "Applies next time a wallpaper loads" — same snapshot semantics as the
+     * global Performance settings, because the bridge is wired (or not) at
+     * document-start, not retroactively for an already-running bundle.
+     */
+    private fun buildGeolocationSection(meta: com.aetherdesk.lumenfall.storage.BundleMeta): View {
+        val screening = store.screening(bundleId)
+        val clean = screening != null && !screening.limited
+        if (!clean) {
+            // Limited / pre-screening bundle: explain why the option is absent
+            // rather than silently omitting it, so a curious user isn't left
+            // wondering where the toggle went.
+            return glassPanel(TextView(this).apply {
+                text = "Geolocation is unavailable for this bundle: it was flagged by " +
+                    "import screening (or imported before screening existed), and " +
+                    "location access requires a clean screening result."
+                setTextColor(getColor(R.color.glass_text_secondary))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            })
+        }
+        val enabled = store.geolocationEnabled(bundleId)
+        val toggle = GlassUi.switchControl(this, enabled) { on ->
+            if (on) {
+                val granted = ContextCompat.checkSelfPermission(
+                    this, Manifest.permission.ACCESS_FINE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+                if (granted) {
+                    store.setGeolocationEnabled(bundleId, true)
+                    toast("Geolocation enabled for this bundle — applies next time it loads")
+                } else {
+                    // Don't persist yet; the launcher's callback decides based
+                    // on the actual grant result, and reverts the toggle if
+                    // denied. Set the toggle visually on so the user sees their
+                    // tap registered; the callback flips it back on denial.
+                    requestLocationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                }
+            } else {
+                store.setGeolocationEnabled(bundleId, false)
+            }
+        }
+        geoToggle = toggle
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        row.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(12) }
+            addView(TextView(this@BundleSettingsActivity).apply {
+                text = "Allow geolocation"
+                setTextColor(getColor(R.color.glass_text_primary))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            })
+            addView(TextView(this@BundleSettingsActivity).apply {
+                text = "Lets this wallpaper read the device's GPS location via " +
+                    "window.aetherDesk.geolocation. Off by default. Applies next " +
+                    "time the wallpaper loads."
+                setTextColor(getColor(R.color.glass_text_secondary))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setPadding(0, dp(2), 0, 0)
+            })
+        })
+        row.addView(toggle)
+        return glassPanel(row)
+    }
+
+    /**
      * The live preview: the real bundle in the shared sandboxed WebView with the
      * same screening limits the wallpaper runs under, subscribed to the bus so
      * [apply]'s existing notify drives it, and watched by [PerformanceGovernor].
@@ -261,6 +360,7 @@ class BundleSettingsActivity : AppCompatActivity() {
             this, settings, screening?.fpsCap ?: BundleWebView.DEFAULT_FPS_CAP
         )
         currentPreviewFpsCap = resolved.fpsCap
+        val allowGeolocation = GeolocationPolicy.allowed(this, store, bundleId)
         val wv = BundleWebView.create(
             context = this,
             initialProperties = effectiveJson,
@@ -270,6 +370,7 @@ class BundleSettingsActivity : AppCompatActivity() {
             allowLan = settings.allowLan,
             initiallySuspended = resolved.initiallySuspended,
             bundleId = bundleId,
+            allowGeolocation = allowGeolocation,
             onLog = { handlePreviewMessage(it) }
         ).apply { layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT) }
 

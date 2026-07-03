@@ -12,6 +12,7 @@ import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.aetherdesk.lumenfall.bridge.AetherDeskBridge
+import com.aetherdesk.lumenfall.bridge.GeolocationBridge
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -58,6 +59,14 @@ object BundleWebView {
         initiallySuspended: Boolean = false,
         /** When set, allowed external requests are recorded in [ContactedDomains]. */
         bundleId: String? = null,
+        /**
+         * Wire the `window.aetherDesk.geolocation` bridge for this bundle. Must
+         * already have passed [GeolocationPolicy] at render time — this factory
+         * trusts the caller's snapshot and only re-checks the system permission
+         * per call (inside [GeolocationProvider]), since a wallpaper runs in the
+         * background and can't react to a mid-session revoke with a prompt.
+         */
+        allowGeolocation: Boolean = false,
         onHeartbeat: () -> Unit = {},
         onLog: (String) -> Unit = {},
         onPageLoaded: () -> Unit = {},
@@ -98,6 +107,21 @@ object BundleWebView {
                 AetherDeskBridge(onHeartbeat = onHeartbeat, onLog = onLog),
                 "aetherDeskNative"
             )
+            // Geolocation: only register the native surface when the bundle
+            // passed the screening + per-bundle-toggle + permission gate (see
+            // GeolocationPolicy). A bundle that didn't never sees
+            // `window.aetherDeskGeo`, and the shim's promise rejects 'disabled'
+            // — the surface isn't there to call.
+            if (allowGeolocation) {
+                addJavascriptInterface(
+                    GeolocationBridge(
+                        webView = this,
+                        provider = GeolocationProvider(context.applicationContext),
+                        onLog = onLog
+                    ),
+                    "aetherDeskGeo"
+                )
+            }
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(
                     view: WebView,
@@ -301,6 +325,59 @@ object BundleWebView {
               window.WebSocket[k] = _OrigWS[k];
             });
           }
+
+          // --- Geolocation ----------------------------------------------------
+          // Promise-based; resolves/rejects via the native aetherDeskGeo
+          // surface (registered only when GeolocationPolicy passed). When that
+          // surface isn't present (bundle not opted in, or screening-gated),
+          // getCurrentPosition rejects 'disabled' — a consistent API that just
+          // doesn't work, rather than `undefined`.
+          //
+          // _geoResolve/_geoReject are hoisted locals so the disabled-path
+          // call below can reference them bare (a bare reference to
+          // `window.aetherDesk._geoReject` would throw a ReferenceError inside
+          // the Promise executor, rejecting with an Error object that
+          // JSON.stringifies to {} — hiding the code/message). They're also
+          // exposed on window.aetherDesk so the native bridge can call back in
+          // via evaluateJavascript.
+          var _geoSeq = 0;
+          var _geoPending = {};
+          function _geoResolve(callId, json) {
+            var p = _geoPending[callId]; if (!p) return;
+            delete _geoPending[callId];
+            try { p.resolve(JSON.parse(json)); }
+            catch (e) { p.reject({ code: 'unavailable', message: 'bad payload' }); }
+          }
+          function _geoReject(callId, code, message) {
+            var p = _geoPending[callId]; if (!p) return;
+            delete _geoPending[callId];
+            p.reject({ code: code, message: message });
+          }
+          window.aetherDesk.geolocation = {
+            getCurrentPosition: function (opts) {
+              opts = opts || {};
+              var callId = ++_geoSeq;
+              return new Promise(function (resolve, reject) {
+                _geoPending[callId] = { resolve: resolve, reject: reject };
+                var native = window.aetherDeskGeo;
+                if (!native) {
+                  _geoReject(callId, 'disabled', 'geolocation not enabled for this bundle');
+                  return;
+                }
+                try {
+                  native.request(
+                    String(callId),
+                    !!opts.enableHighAccuracy,
+                    (opts.timeoutMs | 0) || 10000
+                  );
+                } catch (e) {
+                  _geoReject(callId, 'unavailable', String(e && e.message || e));
+                }
+              });
+            }
+          };
+          window.aetherDesk._geoResolve = _geoResolve;
+          window.aetherDesk._geoReject = _geoReject;
 
           window.aetherDesk.system.heartbeat();
         })();

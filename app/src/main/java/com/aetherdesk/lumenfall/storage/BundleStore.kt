@@ -75,6 +75,7 @@ class BundleStore(context: Context) {
 
     fun delete(id: String) {
         bundleDir(id).deleteRecursively()
+        prefs.edit().remove(geoKey(id)).apply()
         if (activeId == id) activeId = null
     }
 
@@ -136,12 +137,26 @@ class BundleStore(context: Context) {
     fun screening(id: String): BundleScreening? =
         runCatching { BundleScreening.fromJson(screeningFile(id).readText()) }.getOrNull()
 
+    /**
+     * Per-bundle geolocation opt-in. Defaults off. Only takes effect for web
+     * bundles the import screener classified "allowed" (see [GeolocationPolicy]);
+     * a "limited" bundle can't use geolocation even with this on, so the
+     * settings UI doesn't surface the toggle for those bundles.
+     */
+    fun geolocationEnabled(id: String): Boolean = prefs.getBoolean(geoKey(id), false)
+
+    fun setGeolocationEnabled(id: String, enabled: Boolean) =
+        prefs.edit().putBoolean(geoKey(id), enabled).apply()
+
+    private fun geoKey(id: String) = "${KEY_GEO_PREFIX}$id"
+
     companion object {
         const val META_NAME = "bundle.json"
         const val PROPS_NAME = "properties.json"
         const val OVERRIDES_NAME = "overrides.json"
         const val SCREENING_NAME = "screening.json"
         private const val KEY_ACTIVE = "active_bundle_id"
+        private const val KEY_GEO_PREFIX = "geo_bundle_"
     }
 }
 

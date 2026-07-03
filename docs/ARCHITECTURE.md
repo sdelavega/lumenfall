@@ -270,6 +270,57 @@ Current JNI shape:
 - Rust returns normalized JSON envelopes for now. That avoids duplicating the
   full model in Kotlin while the engine is still moving.
 
+Geolocation (DONE, 2026-07-03 — web bundles only, fine location, per-bundle
+toggle, screening-gated):
+
+- Exposed to web wallpapers as `window.aetherDesk.geolocation.getCurrentPosition
+  ({enableHighAccuracy, timeoutMs})`, a Promise-based API distinct from the raw
+  `navigator.geolocation` the screener distrusts (a bundle using the raw API
+  trips the screener's "Requests geolocation" warning → `limited` → no bridge;
+  the audited, gated path is the bridge one). Resolves `{latitude, longitude,
+  accuracy, altitude?, altitudeAccuracy?, bearing?, speed?, timestamp,
+  elapsedRealtimeNanos, provider}` or rejects `{code, message}` with codes
+  `disabled | denied | unavailable | timeout`.
+- Three gates, all must pass for the native surface (`window.aetherDeskGeo`)
+  to be registered at document-start: (1) the import screener classified this
+  bundle `allowed` (not `limited` — ties location access to the trust decision
+  already made at import, so a screened-out bundle can't reach location as a
+  side channel); (2) a per-bundle toggle in `BundleSettingsActivity`, default
+  off (even a clean bundle doesn't get location until the user opts this
+  wallpaper in); (3) `ACCESS_FINE_LOCATION` granted. The toggle is only shown
+  for web bundles with a clean screening result — a limited bundle gets an
+  explainer instead, so the absence isn't a mystery.
+- A live wallpaper runs in the background and can't host a permission dialog,
+  so the per-bundle toggle in `BundleSettingsActivity` (an Activity) is the
+  only entry point that prompts. Turning the toggle on with permission not
+  yet granted launches `RequestPermission`; denied → the toggle reverts.
+  Permission is also re-checked per bridge call inside `GeolocationProvider`,
+  so a mid-session revoke surfaces as a clean JS `denied` rejection rather
+  than a crash (the policy snapshot was taken at load, but revocation is the
+  one condition that can change after).
+- Fine (not coarse) location: map/sun-position style wallpapers want real
+  precision. Coarse wasn't chosen.
+- Provider: the framework `LocationManager.getCurrentLocation` (API 30+, our
+  minSdk is 33), not FusedLocationProvider. Lumenfall ships no Play Services
+  dependency today (3.5 MB APK, runs on any Android 13+ device); the framework
+  one-shot API needs no persistent client or service binding. Provider
+  selection prefers GPS when enabled, else NETWORK — a WiFi-only tablet like
+  the Pixel Tablet has no GPS_PROVIDER at all, so `isProviderEnabled` gates
+  the choice and the NETWORK_PROVIDER (WiFi-based) fix is used instead.
+- Snapshot semantics (matches Performance settings and screening): the bridge
+  is wired — or not — at document-start, not retroactively for an already-
+  running bundle. The settings UI says as much ("applies next time the
+  wallpaper loads").
+- Verified on-device (Pixel Tablet, WiFi-only, no GPS): (a) toggle off →
+  `disabled`; (b) toggle on + permission granted + screening clean → real
+  fix via `provider:"network"` with lat/long/accuracy/altitude; (c) toggle
+  on + permission granted + screening `limited` → `disabled` (screening
+  gate holds); (d) toggle on + permission revoked → `disabled` (permission
+  gate holds). The mid-session-revoke `denied` path is a defensive re-check
+  on top of the verified policy gate, covered by code inspection (the
+  `checkSelfPermission` call is in `GeolocationProvider.current`).
+
+
 Native build (DONE, 2026-06-29):
 
 - `cargo-ndk` cross-compiles `lumenfall_core` to `liblumenfall_core.so`. It is
