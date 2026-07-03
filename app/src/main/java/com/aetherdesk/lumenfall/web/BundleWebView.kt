@@ -245,17 +245,22 @@ object BundleWebView {
           if (window.aetherDesk) return;
           var native = window.aetherDeskNative;
           var suspended = $initiallySuspended;
+          var _visibilityCb = null;
           window.aetherDesk = {
             properties: $propertiesJson,
             system: {
               fpsCap: $fpsCap,
-              suspend: function () { suspended = true; },
+              suspend: function () {
+                suspended = true;
+                _notifyVisibility(false);
+              },
               resume: function () {
                 suspended = false;
                 // A frame dropped while suspended broke the bundle's rAF chain
                 // (its callback never ran, so it never re-scheduled). Replay the
                 // parked callback so animation resumes.
                 if (_parked) { var p = _parked; _parked = null; window.requestAnimationFrame(p); }
+                _notifyVisibility(true);
               },
               heartbeat: function () {
                 if (native) native.postMessage('{"heartbeat":true}');
@@ -270,6 +275,7 @@ object BundleWebView {
               if (native) native.postMessage(typeof m === 'string' ? m : JSON.stringify(m));
             },
             onPropertyChange: function () {},
+            onVisibility: function (cb) { _visibilityCb = cb; },
             _setProperty: function (key, value) {
               this.properties[key] = value;
               try { this.onPropertyChange(key, value); } catch (e) {}
@@ -278,6 +284,15 @@ object BundleWebView {
               }
             }
           };
+
+          function _notifyVisibility(visible) {
+            if (_visibilityCb) {
+              try { _visibilityCb(visible); } catch (e) {}
+            }
+          }
+          // Fire the initial visibility state so a bundle that registers
+          // onVisibility early sees the correct starting state.
+          _notifyVisibility(!$initiallySuspended);
 
           // Liveness + performance telemetry: report how many rAF frames were
           // delivered since start, every 2 s — frequent enough for
