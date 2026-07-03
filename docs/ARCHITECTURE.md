@@ -50,11 +50,16 @@ document-start, so the bundle reads its config before its first script. The
 settings UI persists each change as an override and calls `PropertyBus.notify`;
 the web renderer, if registered, pushes it into the running bundle via
 `_setProperty` — which updates `properties`, fires `onPropertyChange`, and also
-calls Lively's `livelyPropertyListener` for compatibility. NOTE: Android tears the
-wallpaper engine down under a fullscreen settings Activity, so in the usual
-adjust-then-return flow the change actually lands via injection on the next engine
-creation; the live push only has an audience when an engine is concurrently
-visible (split-screen, etc.).
+calls Lively's `livelyPropertyListener` for compatibility. Android tears the
+wallpaper engine down under a fullscreen settings Activity, so a push to the
+*home-screen* engine only lands via injection on its next creation — but
+`BundleSettingsActivity` (DONE, 2026-07-03) now runs its own embedded instance
+of the bundle (via `BundleWebView`, the same construction the wallpaper host
+uses) and registers it on `PropertyBus` too, so every control change is visible
+live while adjusting it, regardless of the home-screen engine's state. The
+Activity declares `configChanges` in the manifest and relays out its own view
+tree on rotation instead of being destroyed, so this preview WebView survives
+turning the device without reloading.
 
 Practical limits (DONE, 2026-07-03 — ported from ÆtherDesk so bundles behave
 identically on both hosts):
@@ -78,6 +83,28 @@ identically on both hosts):
   5-req/min budget on external requests. Main-frame navigation off the bundle
   origin is refused; the shim rejects WebSockets to raw IPs (sockets bypass
   shouldInterceptRequest). Local asset-loader traffic is never filtered.
+
+Settings UI (DONE, 2026-07-03):
+
+- Responsive: side-by-side (settings left, preview right) in landscape,
+  stacked (preview top, settings bottom) in portrait, via the Activity's own
+  `onConfigurationChanged` relayout rather than a rebuild.
+- Visually a facsimile of Liquid Glass — translucent rounded panels
+  (`colors.xml`, `drawable/glass_*_bg.xml`), a Material `Slider` and
+  `SwitchCompat` sharing one accent tint, a themed `Spinner`/`EditText`.
+  Real backdrop blur of arbitrary content isn't available to a plain View
+  hierarchy on Android without Compose + a blur library, so this leans on
+  translucency, thin borders, and rounded-corner WebView clipping instead of
+  live blur.
+- `web/PerformanceGovernor` watches the embedded preview for a control change
+  that's overloading the device. There's no public per-app GPU usage API, so
+  it uses achieved-fps-vs-target from the bridge shim's frame counter (the
+  one signal that reaches inside the WebView's sandboxed renderer process),
+  backed by process CPU time and system memory pressure as coarser
+  backstops. On sustained overload it reverts the property change that
+  caused it (coalescing a whole slider drag into one revert target) or, when
+  overload isn't attributable to a specific change, eases the live fps cap
+  — a per-session easing, not persisted to the bundle's screening record.
 
 The Android runtime should not try to share Swift code with ÆtherDesk. The
 portable contract is the data shape: Lively metadata, property definitions,
