@@ -1,7 +1,9 @@
+mod bundle_screening;
 mod bundle_validation;
 mod lively_info;
 mod lively_properties;
 
+pub use bundle_screening::{BundleScreener, Classification, ScreeningReport, ScreeningResponse};
 pub use bundle_validation::{BundleValidation, BundleValidationResponse, BundleValidator};
 pub use lively_info::{LivelyInfo, LivelyInfoParser, WallpaperKind};
 pub use lively_properties::{LivelyPropertiesParser, WallpaperProperty};
@@ -77,6 +79,29 @@ pub extern "system" fn Java_com_aetherdesk_lumenfall_core_LumenfallCore_validate
     env.new_string(output)
         .map(|value| value.into_raw())
         .unwrap_or(std::ptr::null_mut())
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_aetherdesk_lumenfall_core_LumenfallCore_screenBundle(
+    mut env: JNIEnv,
+    _class: JClass,
+    script_source: JString,
+) -> jstring {
+    let output = env
+        .get_string(&script_source)
+        .map(|source| screen_bundle_json(source.to_string_lossy().as_ref()))
+        .unwrap_or_else(|error| error_json(error.to_string()));
+
+    env.new_string(output)
+        .map(|value| value.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+fn screen_bundle_json(script_source: &str) -> String {
+    serde_json::to_string(&ScreeningResponse::from(BundleScreener::screen(
+        script_source,
+    )))
+    .unwrap_or_else(error_json)
 }
 
 fn parse_info_json(text: &str) -> String {
