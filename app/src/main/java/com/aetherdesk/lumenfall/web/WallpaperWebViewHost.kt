@@ -190,18 +190,19 @@ private class WallpaperPresentation(
         val wv = webView ?: return
         if (visible) {
             wv.onResume()
-            wv.resumeTimers()
+            WebViewTimers.setNeedsTimers(this, wv, true)
             wv.evaluateJavascript("window.aetherDesk && window.aetherDesk.system.resume();", null)
         } else {
             wv.evaluateJavascript("window.aetherDesk && window.aetherDesk.system.suspend();", null)
             wv.onPause()
-            wv.pauseTimers() // process-global; the settings preview un-latches it (see BundleSettingsActivity)
+            WebViewTimers.setNeedsTimers(this, wv, false)
         }
     }
 
     override fun dismiss() {
         webView?.let {
             it.stopLoading()
+            WebViewTimers.forget(this, it)
             (it.parent as? ViewGroup)?.removeView(it)
             it.destroy()
         }

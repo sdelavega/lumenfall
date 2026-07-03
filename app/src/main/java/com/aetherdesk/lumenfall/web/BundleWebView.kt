@@ -160,7 +160,13 @@ object BundleWebView {
             system: {
               fpsCap: $fpsCap,
               suspend: function () { suspended = true; },
-              resume: function () { suspended = false; },
+              resume: function () {
+                suspended = false;
+                // A frame dropped while suspended broke the bundle's rAF chain
+                // (its callback never ran, so it never re-scheduled). Replay the
+                // parked callback so animation resumes.
+                if (_parked) { var p = _parked; _parked = null; window.requestAnimationFrame(p); }
+              },
               heartbeat: function () {
                 if (native) native.postMessage('{"heartbeat":true}');
               }
@@ -183,17 +189,35 @@ object BundleWebView {
             }
           };
 
+          // Liveness + performance telemetry: report how many rAF frames were
+          // delivered since start, every 2 s — frequent enough for
+          // PerformanceGovernor to compute an achieved-fps window and react
+          // within a few seconds. Also proves the frame loop isn't stalled
+          // (setInterval proves timers tick; _frames proves rAF dispatches).
+          var _frames = 0;
+          setInterval(function () {
+            if (native) native.postMessage('{"tick":true,"frames":' + _frames + '}');
+          }, 2000);
+
           var _origRAF = window.requestAnimationFrame.bind(window);
           var _lastFrame = 0;
+          var _parked = null;
           window.requestAnimationFrame = function (cb) {
             var cap = window.aetherDesk.system.fpsCap || $fpsCap;
             var interval = 1000.0 / cap;
-            var elapsed = performance.now() - _lastFrame;
-            var delay = interval - elapsed;
+            // Pace with performance.now() ONLY. The rAF callback timestamp can
+            // sit on a different timebase than performance.now() in some WebView
+            // hosts (seen on an Activity WebView, Android 17 beta); mixing the
+            // two poisons `elapsed` and parks the chain in a years-long
+            // setTimeout. Clamp so the wait is never negative or > one interval.
+            var delay = interval - (performance.now() - _lastFrame);
+            if (!(delay > 0)) delay = 0;
+            if (delay > interval) delay = interval;
             function fire() {
               _origRAF(function (ts) {
-                if (suspended) return;
-                _lastFrame = ts;
+                if (suspended) { _parked = cb; return; }
+                _lastFrame = performance.now();
+                _frames++;
                 cb(ts);
               });
             }
