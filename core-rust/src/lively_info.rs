@@ -14,6 +14,12 @@ pub enum WallpaperKind {
 pub struct LivelyInfo {
     pub title: String,
     pub author: Option<String>,
+    pub description: Option<String>,
+    pub license: Option<String>,
+    pub homepage: Option<String>,
+    pub tags: Vec<String>,
+    pub release_date: Option<String>,
+    pub version: Option<String>,
     pub kind: WallpaperKind,
     pub file_name: Option<String>,
     pub preview_name: Option<String>,
@@ -27,6 +33,12 @@ impl LivelyInfoParser {
         Ok(LivelyInfo {
             title: raw.title.unwrap_or_else(|| "Untitled".to_string()),
             author: raw.author,
+            description: raw.description.or(raw.desc),
+            license: raw.license,
+            homepage: raw.homepage,
+            tags: raw.tags.unwrap_or_default(),
+            release_date: raw.release_date,
+            version: raw.version,
             kind: map_kind(raw.wallpaper_type.as_ref()),
             file_name: raw.file_name,
             preview_name: raw.preview,
@@ -41,6 +53,17 @@ struct RawLivelyInfo {
     title: Option<String>,
     #[serde(alias = "author")]
     author: Option<String>,
+    description: Option<String>,
+    // Some exporters use "Desc" instead of "Description".
+    desc: Option<String>,
+    license: Option<String>,
+    homepage: Option<String>,
+    tags: Option<Vec<String>>,
+    release_date: Option<String>,
+    // AppVersion is the Lively schema version; Version is the bundle's own
+    // version string. Both are surfaced so a future picker can show either.
+    app_version: Option<String>,
+    version: Option<String>,
     #[serde(rename = "Type", alias = "type")]
     wallpaper_type: Option<RawType>,
     #[serde(alias = "fileName")]
@@ -151,5 +174,64 @@ mod tests {
         // "8" == gif → Image.
         let info = LivelyInfoParser::parse(r#"{"Title":"G","Type":"8"}"#).unwrap();
         assert_eq!(info.kind, WallpaperKind::Image);
+    }
+
+    #[test]
+    fn parses_extended_fields() {
+        let info = LivelyInfoParser::parse(
+            r#"{
+                "Title": "Aurora",
+                "Author": "Jane",
+                "Description": "Northern lights simulation",
+                "License": "MIT",
+                "Homepage": "https://example.com/aurora",
+                "Tags": ["nature", "calm"],
+                "ReleaseDate": "2025-01-15",
+                "Version": "1.2.0",
+                "Type": "web",
+                "FileName": "index.html",
+                "Preview": "preview.png"
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(info.title, "Aurora");
+        assert_eq!(info.description.as_deref(), Some("Northern lights simulation"));
+        assert_eq!(info.license.as_deref(), Some("MIT"));
+        assert_eq!(info.homepage.as_deref(), Some("https://example.com/aurora"));
+        assert_eq!(info.tags, vec!["nature", "calm"]);
+        assert_eq!(info.release_date.as_deref(), Some("2025-01-15"));
+        assert_eq!(info.version.as_deref(), Some("1.2.0"));
+    }
+
+    #[test]
+    fn desc_field_used_when_description_absent() {
+        let info = LivelyInfoParser::parse(
+            r#"{"Title":"X","Desc":"Short form"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(info.description.as_deref(), Some("Short form"));
+    }
+
+    #[test]
+    fn description_wins_over_desc() {
+        let info = LivelyInfoParser::parse(
+            r#"{"Title":"X","Description":"Long form","Desc":"Short form"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(info.description.as_deref(), Some("Long form"));
+    }
+
+    #[test]
+    fn missing_optional_fields_default_to_empty() {
+        let info = LivelyInfoParser::parse(r#"{"Title":"Minimal","Type":1}"#).unwrap();
+
+        assert!(info.description.is_none());
+        assert!(info.license.is_none());
+        assert!(info.tags.is_empty());
+        assert!(info.release_date.is_none());
+        assert!(info.version.is_none());
     }
 }
