@@ -146,6 +146,32 @@ WatchdogTimer):
   retry with a 10s timeout, demoting only if the retry also fails. A fresh
   attempt only happens if the host itself is recreated (wallpaper
   reselected, or the engine torn down and rebuilt).
+- All three demotion paths (watchdog hang, render-process-gone, nav-retry-
+  then-demote) are verified live on-device with isolated per-path repros:
+  a JS busy-loop bundle for the watchdog; a bundle that grows its own JS
+  heap in 64 MB chunks until the OS kills its renderer process for the
+  render-process-gone path (`onRenderProcessGone` fires with
+  `crashed=false` — an external kill, not a Chromium-internal crash, and
+  cleanly reaped, unlike the busy-loop case below); and a bundle whose
+  entry file is deleted from disk after import (simulating storage
+  going missing under a bundle) for the nav-retry-then-demote tail. All
+  three were confirmed to reach the correct `#0B0F1A` fallback pixel
+  (sampled from a device screenshot), not just to log the right message.
+- That per-path repro work found a second real bug: the fallback color
+  never actually rendered, on any of the three paths — `markFailed()`'s
+  `detach()` releases the `VirtualDisplay`, which disconnects its
+  Surface's buffer producer *asynchronously*, and the immediately-
+  following `holder.lockCanvas()` call to draw the fallback would return
+  null (confirmed via targeted logging: reproducibly null on the very
+  first attempt, no exception thrown) — silently leaving the surface
+  showing stale black content forever. Fixed by retrying `lockCanvas`
+  briefly (up to 5x 30ms) before giving up, bridging the async handoff.
+  Re-verified all three paths after the fix, including a redo of the
+  watchdog-hang path (whose original fallback-color check, earlier in
+  this same session, predates this fix and should be considered to have
+  been checking stale black, not actually confirming the color) — all
+  three now land the exact `#0B0F1A` pixel, sampled from a device
+  screenshot each time.
 - Along the way, fixed two real bugs in `web/WebViewTimers` (the
   process-shared `pauseTimers`/`resumeTimers` latch, since that call is
   process-global and affects every WebView, not just the caller's) found
