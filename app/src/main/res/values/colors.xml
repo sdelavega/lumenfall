@@ -18,6 +18,14 @@
     <color name="glass_accent">#64D2FF</color>
     <color name="glass_accent_dim">#3364D2FF</color>
 
+    <!-- Floating popups (dropdown menus) sit over arbitrary content, not our
+         own controlled dark backdrop, and the anchor view itself keeps
+         rendering underneath them — so unlike the inline panels above, a
+         translucent fill there lets both bleed through and become unreadable.
+         Popups get a solid, opaque dark fill instead. -->
+    <color name="glass_popup_fill">#F0141C30</color>
+    <color name="glass_popup_highlight">#2664D2FF</color>
+
     <color name="glass_text_primary">#FFFFFFFF</color>
     <color name="glass_text_secondary">#B3FFFFFF</color>
 </resources>

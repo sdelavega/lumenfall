@@ -423,7 +423,7 @@ class BundleSettingsActivity : AppCompatActivity() {
             adapter = glassSpinnerAdapter(items)
             setBackgroundResource(R.drawable.glass_field_bg)
             setPadding(dp(12), dp(10), dp(12), dp(10))
-            setPopupBackgroundResource(R.drawable.glass_panel_bg)
+            setPopupBackgroundResource(R.drawable.glass_popup_bg)
             var skipFirst = true
             listener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) {
@@ -454,8 +454,8 @@ class BundleSettingsActivity : AppCompatActivity() {
             override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val v = super.getDropDownView(position, convertView, parent) as TextView
                 v.setTextColor(getColor(R.color.glass_text_primary))
-                v.setBackgroundColor(Color.TRANSPARENT)
-                v.setPadding(dp(16), dp(12), dp(16), dp(12))
+                v.setBackgroundResource(R.drawable.glass_popup_item_bg)
+                v.setPadding(dp(16), dp(14), dp(16), dp(14))
                 return v
             }
         }
