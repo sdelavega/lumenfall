@@ -223,6 +223,29 @@ of the porting recommendations, after the watchdog):
   the reduced fps cap applied and its tracker/metadata/raw-IP probes
   blocked, proving policy enforcement is active during thumbnailing too.
 
+Contacted-domains transparency (DONE, 2026-07-03 — ported from ÆtherDesk;
+last of the three porting recommendations):
+
+- `web/ContactedDomains` is an in-memory, process-wide ledger of the
+  external domains each web bundle has actually contacted, recorded in
+  `BundleWebView.shouldInterceptRequest` for every request the network
+  policy lets out. Allowed requests only — a blocked request never left
+  the device, so listing it would overstate what the bundle did (blocks
+  are already surfaced in the bridge log). Deduped, insertion-ordered,
+  capped at 100 per bundle, and deliberately not persisted (matching
+  ÆtherDesk): "since this app started" is the honest scope for a live
+  readout, and the wallpaper engine, settings preview, and thumbnailer
+  all run in one process, so everything lands in the same ledger.
+- Surfaced at the bottom of `BundleSettingsActivity` ("Domains contacted:
+  …" / "No external domains contacted yet."), refreshing every 2s while
+  visible. Web bundles without configurable properties now get the
+  Settings entry point too — the screen carries the live preview and this
+  readout, so it's no longer property-gated. Deleting a bundle clears its
+  ledger entry.
+- Known gap, shared with ÆtherDesk: WebSocket connections to FQDNs bypass
+  `shouldInterceptRequest` (Android offers no hook), so they don't land in
+  the ledger; raw-IP sockets are refused by the shim outright.
+
 The Android runtime should not try to share Swift code with ÆtherDesk. The
 portable contract is the data shape: Lively metadata, property definitions,
 property overrides, validation rules, and the JavaScript bridge semantics.
