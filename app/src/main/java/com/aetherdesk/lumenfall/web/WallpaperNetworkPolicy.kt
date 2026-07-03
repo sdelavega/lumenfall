@@ -28,8 +28,8 @@ import android.net.Uri
  */
 class WallpaperNetworkPolicy(
     private val budgetPerMinute: Int? = null,
-    private val blockAllExternal: Boolean = false,
-    private val allowLan: Boolean = false,
+    blockAllExternal: Boolean = false,
+    allowLan: Boolean = false,
     private val now: () -> Long = System::currentTimeMillis
 ) {
     sealed interface Verdict {
@@ -38,6 +38,13 @@ class WallpaperNetworkPolicy(
     }
 
     private val windowStarts = ArrayDeque<Long>()
+    @Volatile private var blockAllExternal = blockAllExternal
+    @Volatile private var allowLan = allowLan
+
+    fun update(blockAllExternal: Boolean, allowLan: Boolean) {
+        this.blockAllExternal = blockAllExternal
+        this.allowLan = allowLan
+    }
 
     fun decide(uri: Uri): Verdict {
         val scheme = uri.scheme?.lowercase() ?: return Verdict.Block("no scheme")

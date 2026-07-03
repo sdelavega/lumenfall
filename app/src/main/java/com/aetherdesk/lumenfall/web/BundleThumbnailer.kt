@@ -19,6 +19,7 @@ import android.webkit.WebView
 import com.aetherdesk.lumenfall.storage.AppSettingsStore
 import com.aetherdesk.lumenfall.storage.BundleMeta
 import com.aetherdesk.lumenfall.storage.BundleStore
+import com.aetherdesk.lumenfall.storage.BundledWallpapers
 import java.io.File
 import kotlin.concurrent.thread
 
@@ -39,10 +40,12 @@ import kotlin.concurrent.thread
  *   renderers use, so a bundle can't do anything during thumbnailing it
  *   couldn't do as a wallpaper.
  *
- * The generated file is saved into the bundle dir under a dot-prefixed name so
- * it can't collide with the bundle's own content, and bundle.json's previewPath
- * is updated to point at it. A failed attempt writes a marker file instead so
- * the bundle isn't retried on every picker refresh.
+ * Imported bundle thumbnails are saved into the bundle dir under a dot-prefixed
+ * name and bundle.json's previewPath is updated to point at it. Bundled asset
+ * wallpapers can't be modified, so their generated web snapshots are cached in
+ * app data under `bundled-thumbnails/` and read directly by the picker. A
+ * failed attempt writes a marker file instead so the bundle isn't retried on
+ * every picker refresh.
  */
 object BundleThumbnailer {
 
@@ -66,14 +69,21 @@ object BundleThumbnailer {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var running = false
 
-    fun needsThumbnail(store: BundleStore, meta: BundleMeta): Boolean =
-        meta.previewPath == null &&
-            meta.entryPath != null &&
-            meta.kind in setOf("web", "video", "image") &&
-            // Bundled wallpapers ship in assets, not on disk; the thumbnailer
-            // reads from disk, so skip them (they'll get blank tiles for now).
-            !com.aetherdesk.lumenfall.storage.BundledWallpapers.isBundled(meta.id) &&
-            !File(store.bundleDir(meta.id), FAILED_MARKER).exists()
+    fun bundledThumbnailFile(context: Context, meta: BundleMeta): File? {
+        if (!BundledWallpapers.isBundled(meta.id)) return null
+        val folder = BundledWallpapers.folderFor(meta.id) ?: return null
+        return File(bundledCacheDir(context), "$folder$THUMB_NAME")
+    }
+
+    private fun needsThumbnail(context: Context, store: BundleStore, meta: BundleMeta): Boolean {
+        if (meta.entryPath == null || meta.kind !in setOf("web", "video", "image")) return false
+        if (BundledWallpapers.isBundled(meta.id)) {
+            val thumb = bundledThumbnailFile(context, meta) ?: return false
+            val marker = bundledFailedMarker(context, meta) ?: return false
+            return !hasBundledAssetPreview(context, meta) && !thumb.exists() && !marker.exists()
+        }
+        return meta.previewPath == null && !File(store.bundleDir(meta.id), FAILED_MARKER).exists()
+    }
 
     /**
      * Generate thumbnails for every bundle that's missing one, one at a time
@@ -85,7 +95,7 @@ object BundleThumbnailer {
     fun generateMissing(context: Context, store: BundleStore, onProgress: () -> Unit) {
         if (running) return
         val app = context.applicationContext
-        val next = store.list().firstOrNull { needsThumbnail(store, it) } ?: return
+        val next = store.list().firstOrNull { needsThumbnail(app, store, it) } ?: return
         running = true
         generate(app, store, next) { updated ->
             running = false
@@ -103,32 +113,32 @@ object BundleThumbnailer {
     fun generate(context: Context, store: BundleStore, meta: BundleMeta, onDone: (BundleMeta?) -> Unit) {
         val entry = meta.entryPath
         if (entry == null) {
-            markFailed(store, meta); onDone(null); return
+            markFailed(context, store, meta); onDone(null); return
         }
         when (meta.kind) {
-            "image" -> imageThumbnail(store, meta, entry, onDone)
-            "video" -> videoThumbnail(store, meta, entry, onDone)
+            "image" -> imageThumbnail(context.applicationContext, store, meta, entry, onDone)
+            "video" -> videoThumbnail(context.applicationContext, store, meta, entry, onDone)
             "web" -> WebCapture(context.applicationContext, store, meta, entry, onDone).start()
             else -> {
-                markFailed(store, meta); onDone(null)
+                markFailed(context, store, meta); onDone(null)
             }
         }
     }
 
     /** The wallpaper is an image; the entry file is its own best preview. */
-    private fun imageThumbnail(store: BundleStore, meta: BundleMeta, entry: String, onDone: (BundleMeta?) -> Unit) {
+    private fun imageThumbnail(context: Context, store: BundleStore, meta: BundleMeta, entry: String, onDone: (BundleMeta?) -> Unit) {
         thread {
             val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(store.fileFor(meta.id, entry).absolutePath, opts)
             val ok = opts.outWidth > 0 && opts.outHeight > 0
             mainHandler.post {
                 if (ok) persist(store, meta.copy(previewPath = entry), onDone)
-                else fail(store, meta, onDone)
+                else fail(context, store, meta, onDone)
             }
         }
     }
 
-    private fun videoThumbnail(store: BundleStore, meta: BundleMeta, entry: String, onDone: (BundleMeta?) -> Unit) {
+    private fun videoThumbnail(context: Context, store: BundleStore, meta: BundleMeta, entry: String, onDone: (BundleMeta?) -> Unit) {
         thread {
             val updated = runCatching {
                 val mmr = MediaMetadataRetriever()
@@ -136,42 +146,76 @@ object BundleThumbnailer {
                     mmr.setDataSource(store.fileFor(meta.id, entry).absolutePath)
                     // ~1s in skips a black lead-in frame; fall back to frame 0.
                     val frame = mmr.getFrameAtTime(1_000_000) ?: mmr.getFrameAtTime(0)
-                    frame?.let { saveThumb(store, meta, it) }
+                    frame?.let { saveThumb(context, store, meta, it) }
                 } finally {
                     mmr.release()
                 }
             }.getOrNull()
             mainHandler.post {
                 if (updated != null) persist(store, updated, onDone)
-                else fail(store, meta, onDone)
+                else fail(context, store, meta, onDone)
             }
         }
     }
 
     /** Downscale + JPEG-encode [bitmap] into the bundle dir; returns updated meta. */
-    private fun saveThumb(store: BundleStore, meta: BundleMeta, bitmap: Bitmap): BundleMeta {
+    private fun saveThumb(context: Context?, store: BundleStore, meta: BundleMeta, bitmap: Bitmap): BundleMeta {
         val scaled = if (bitmap.width > THUMB_WIDTH) {
             val h = (bitmap.height.toLong() * THUMB_WIDTH / bitmap.width).toInt().coerceAtLeast(1)
             Bitmap.createScaledBitmap(bitmap, THUMB_WIDTH, h, true)
         } else bitmap
-        val file = File(store.bundleDir(meta.id), THUMB_NAME)
+        val file = if (BundledWallpapers.isBundled(meta.id)) {
+            val appContext = context ?: error("context required for bundled thumbnail")
+            bundledThumbnailFile(appContext, meta) ?: error("invalid bundled wallpaper id")
+        } else {
+            File(store.bundleDir(meta.id), THUMB_NAME)
+        }
+        file.parentFile?.mkdirs()
         file.outputStream().use { scaled.compress(Bitmap.CompressFormat.JPEG, 85, it) }
-        return meta.copy(previewPath = THUMB_NAME)
+        return if (BundledWallpapers.isBundled(meta.id)) meta else meta.copy(previewPath = THUMB_NAME)
     }
 
     private fun persist(store: BundleStore, updated: BundleMeta, onDone: (BundleMeta?) -> Unit) {
+        if (BundledWallpapers.isBundled(updated.id)) {
+            onDone(updated)
+            return
+        }
         // saveMeta throws if the bundle was deleted mid-generation; that's a
         // clean "never mind," not a failure to mark.
         if (runCatching { store.saveMeta(updated) }.isSuccess) onDone(updated) else onDone(null)
     }
 
-    private fun fail(store: BundleStore, meta: BundleMeta, onDone: (BundleMeta?) -> Unit) {
-        markFailed(store, meta)
+    private fun fail(context: Context, store: BundleStore, meta: BundleMeta, onDone: (BundleMeta?) -> Unit) {
+        markFailed(context, store, meta)
         onDone(null)
     }
 
-    private fun markFailed(store: BundleStore, meta: BundleMeta) {
-        runCatching { File(store.bundleDir(meta.id), FAILED_MARKER).writeText("") }
+    private fun markFailed(context: Context, store: BundleStore, meta: BundleMeta) {
+        val marker = if (BundledWallpapers.isBundled(meta.id)) {
+            bundledFailedMarker(context, meta)
+        } else {
+            File(store.bundleDir(meta.id), FAILED_MARKER)
+        }
+        runCatching {
+            marker?.parentFile?.mkdirs()
+            marker?.writeText("")
+        }
+    }
+
+    private fun bundledCacheDir(context: Context): File =
+        File(context.applicationContext.filesDir, "bundled-thumbnails").apply { mkdirs() }
+
+    private fun bundledFailedMarker(context: Context, meta: BundleMeta): File? {
+        val folder = BundledWallpapers.folderFor(meta.id) ?: return null
+        return File(bundledCacheDir(context), "$folder$FAILED_MARKER")
+    }
+
+    private fun hasBundledAssetPreview(context: Context, meta: BundleMeta): Boolean {
+        val folder = BundledWallpapers.folderFor(meta.id) ?: return false
+        val preview = meta.previewPath?.trim()?.trimStart('/') ?: return false
+        return runCatching {
+            context.assets.open("wallpapers/$folder/$preview").use { true }
+        }.getOrDefault(false)
     }
 
     /**
@@ -188,7 +232,12 @@ object BundleThumbnailer {
         private val onDone: (BundleMeta?) -> Unit
     ) {
         private val handler = Handler(Looper.getMainLooper())
-        private val url = "${BundleWebView.APP_ORIGIN}/bundles/${meta.id}/$entry"
+        private val url = if (BundledWallpapers.isBundled(meta.id)) {
+            val folder = BundledWallpapers.folderFor(meta.id)
+            "${BundleWebView.APP_ORIGIN}/assets/wallpapers/$folder/$entry"
+        } else {
+            "${BundleWebView.APP_ORIGIN}/bundles/${meta.id}/$entry"
+        }
 
         private var reader: ImageReader? = null
         private var virtualDisplay: VirtualDisplay? = null
@@ -253,7 +302,7 @@ object BundleThumbnailer {
             // Encode off the main thread; teardown waits for the result so the
             // WebView isn't destroyed while its last frame is being saved.
             thread {
-                val updated = runCatching { saveThumb(store, meta, bitmap) }.getOrNull()
+                val updated = runCatching { saveThumb(context, store, meta, bitmap) }.getOrNull()
                 handler.post { finish(updated) }
             }
         }
@@ -283,7 +332,7 @@ object BundleThumbnailer {
             latest = null
             reader?.close()
             reader = null
-            if (updated != null) persist(store, updated, onDone) else fail(store, meta, onDone)
+            if (updated != null) persist(store, updated, onDone) else fail(context, store, meta, onDone)
         }
 
         private inner class ThumbPresentation(

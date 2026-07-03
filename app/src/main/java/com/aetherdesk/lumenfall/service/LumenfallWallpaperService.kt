@@ -5,12 +5,15 @@ import android.util.Log
 import android.view.SurfaceHolder
 import com.aetherdesk.lumenfall.image.ImageWallpaperRenderer
 import com.aetherdesk.lumenfall.render.ActiveBundleBus
+import com.aetherdesk.lumenfall.render.GeolocationBus
+import com.aetherdesk.lumenfall.render.PerformanceSettingsBus
 import com.aetherdesk.lumenfall.render.PropertyBus
 import com.aetherdesk.lumenfall.render.WallpaperRenderer
 import com.aetherdesk.lumenfall.storage.AppSettingsStore
 import com.aetherdesk.lumenfall.storage.BundleMeta
 import com.aetherdesk.lumenfall.storage.BundleStore
 import com.aetherdesk.lumenfall.storage.BundledWallpapers
+import com.aetherdesk.lumenfall.storage.PerformanceSettings
 import com.aetherdesk.lumenfall.video.VideoWallpaperRenderer
 import com.aetherdesk.lumenfall.web.BundleWebView
 import com.aetherdesk.lumenfall.web.GeolocationPolicy
@@ -31,11 +34,13 @@ class LumenfallWallpaperService : WallpaperService() {
         private var lastWidth = 0
         private var lastHeight = 0
         private var lastVisible = false
+        private var currentScreeningFpsCap = BundleWebView.DEFAULT_FPS_CAP
 
         override fun onCreate(surfaceHolder: SurfaceHolder) {
             super.onCreate(surfaceHolder)
             renderer = createRenderer()
             ActiveBundleBus.register(this, ::swapRenderer)
+            PerformanceSettingsBus.register(this, ::applyPerformanceSettings)
         }
 
         override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -61,7 +66,9 @@ class LumenfallWallpaperService : WallpaperService() {
         override fun onDestroy() {
             super.onDestroy()
             ActiveBundleBus.unregister(this)
+            PerformanceSettingsBus.unregister(this)
             PropertyBus.unregister(this)
+            GeolocationBus.unregister(this)
             renderer?.release()
             renderer = null
         }
@@ -77,6 +84,7 @@ class LumenfallWallpaperService : WallpaperService() {
         private fun swapRenderer() {
             Log.d(TAG, "active bundle changed; swapping renderer in place")
             PropertyBus.unregister(this) // webRenderer re-registers for the new bundle
+            GeolocationBus.unregister(this) // webRenderer re-registers for the new bundle
             renderer?.release()
             renderer = createRenderer()
             val holder = lastHolder
@@ -84,6 +92,17 @@ class LumenfallWallpaperService : WallpaperService() {
                 renderer?.onSurface(holder, lastWidth, lastHeight)
                 renderer?.setVisible(lastVisible)
             }
+        }
+
+        private fun applyPerformanceSettings(settings: PerformanceSettings) {
+            Log.d(
+                TAG,
+                "live performance settings fps=${settings.fpsCap} " +
+                    "pauseHidden=${settings.pauseWhenNotVisible} " +
+                    "pauseBattery=${settings.pauseOnBattery} " +
+                    "blockNetwork=${settings.blockExternalNetwork} allowLan=${settings.allowLan}"
+            )
+            (renderer as? WallpaperWebViewHost)?.applyPerformance(settings, currentScreeningFpsCap)
         }
 
         /** Pick a renderer for the active bundle's kind, falling back to the spike. */
@@ -128,9 +147,10 @@ class LumenfallWallpaperService : WallpaperService() {
             // (pre-screening imports) run as "limited" — the conservative default.
             val screening = webBundle?.let { store.screening(it.id) }
             val limited = webBundle != null && (screening?.limited ?: true)
+            currentScreeningFpsCap = screening?.fpsCap ?: BundleWebView.DEFAULT_FPS_CAP
             val settings = AppSettingsStore(service).get()
             val resolved = PerformancePolicy.resolve(
-                service, settings, screening?.fpsCap ?: BundleWebView.DEFAULT_FPS_CAP
+                service, settings, currentScreeningFpsCap
             )
             val allowGeolocation = webBundle != null &&
                 GeolocationPolicy.allowed(service, store, webBundle.id)
@@ -153,6 +173,10 @@ class LumenfallWallpaperService : WallpaperService() {
                 PropertyBus.register(this, webBundle.id) { key, value ->
                     Log.d(TAG, "live property $key=$value")
                     host.setProperty(key, value)
+                }
+                GeolocationBus.register(this, webBundle.id) { allowed ->
+                    Log.d(TAG, "live geolocation allowed=$allowed")
+                    host.setGeolocationEnabled(allowed)
                 }
             }
             host.load(url)

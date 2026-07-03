@@ -32,6 +32,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.ContextCompat
 import com.aetherdesk.lumenfall.R
+import com.aetherdesk.lumenfall.render.GeolocationBus
 import com.aetherdesk.lumenfall.render.PropertyBus
 import com.aetherdesk.lumenfall.storage.AppSettingsStore
 import com.aetherdesk.lumenfall.storage.BundleProperty
@@ -115,10 +116,12 @@ class BundleSettingsActivity : AppCompatActivity() {
             val toggle = geoToggle ?: return@registerForActivityResult
             if (granted) {
                 store.setGeolocationEnabled(bundleId, true)
-                toast("Geolocation enabled for this bundle — applies next time it loads")
+                applyGeolocationNow()
+                toast("Geolocation enabled for this bundle")
             } else {
                 toggle.isChecked = false
                 store.setGeolocationEnabled(bundleId, false)
+                applyGeolocationNow()
                 toast("Location permission denied — geolocation stays off")
             }
         }
@@ -281,9 +284,9 @@ class BundleSettingsActivity : AppCompatActivity() {
      * and would only confuse. Default off; turning it on prompts for
      * ACCESS_FINE_LOCATION (the wallpaper service itself can't prompt).
      *
-     * "Applies next time a wallpaper loads" — same snapshot semantics as the
-     * global Performance settings, because the bridge is wired (or not) at
-     * document-start, not retroactively for an already-running bundle.
+     * The native bridge stays registered and enforces the toggle at call time,
+     * so changes apply to the live preview and the running wallpaper
+     * immediately.
      */
     private fun buildGeolocationSection(meta: com.aetherdesk.lumenfall.storage.BundleMeta): View {
         val screening = store.screening(bundleId)
@@ -308,7 +311,8 @@ class BundleSettingsActivity : AppCompatActivity() {
                 ) == PackageManager.PERMISSION_GRANTED
                 if (granted) {
                     store.setGeolocationEnabled(bundleId, true)
-                    toast("Geolocation enabled for this bundle — applies next time it loads")
+                    applyGeolocationNow()
+                    toast("Geolocation enabled for this bundle")
                 } else {
                     // Don't persist yet; the launcher's callback decides based
                     // on the actual grant result, and reverts the toggle if
@@ -318,6 +322,7 @@ class BundleSettingsActivity : AppCompatActivity() {
                 }
             } else {
                 store.setGeolocationEnabled(bundleId, false)
+                applyGeolocationNow()
             }
         }
         geoToggle = toggle
@@ -335,8 +340,7 @@ class BundleSettingsActivity : AppCompatActivity() {
             })
             addView(TextView(this@BundleSettingsActivity).apply {
                 text = "Lets this wallpaper read the device's GPS location via " +
-                    "window.aetherDesk.geolocation. Off by default. Applies next " +
-                    "time the wallpaper loads."
+                    "window.aetherDesk.geolocation. Off by default; changes apply immediately."
                 setTextColor(getColor(R.color.glass_text_secondary))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 setPadding(0, dp(2), 0, 0)
@@ -344,6 +348,12 @@ class BundleSettingsActivity : AppCompatActivity() {
         })
         row.addView(toggle)
         return glassPanel(row)
+    }
+
+    private fun applyGeolocationNow() {
+        val allowed = GeolocationPolicy.allowed(this, store, bundleId)
+        preview?.let { BundleWebView.setGeolocationEnabled(it, allowed) }
+        GeolocationBus.notify(bundleId, allowed)
     }
 
     /**

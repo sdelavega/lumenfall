@@ -17,6 +17,7 @@ import android.view.SurfaceHolder
 import android.view.ViewGroup
 import android.webkit.WebView
 import com.aetherdesk.lumenfall.render.WallpaperRenderer
+import com.aetherdesk.lumenfall.storage.PerformanceSettings
 
 /**
  * Hosts a [WebView] on a wallpaper [android.view.Surface] using a
@@ -77,6 +78,9 @@ class WallpaperWebViewHost(
     private var lastWidth = 0
     private var lastHeight = 0
     private var failed = false
+    private var contentVisible = false
+    private var pauseWhenHiddenLive = pauseWhenHidden
+    private var policySuspended = initiallySuspended
 
     /**
      * Deep-sleep: after the wallpaper has been hidden for an extended period,
@@ -98,6 +102,28 @@ class WallpaperWebViewHost(
     /** Push a live property change into the running bundle's bridge. */
     fun setProperty(key: String, value: Any?) {
         presentation?.setProperty(key, value)
+    }
+
+    /** Apply global Performance preferences to the active WebView without reloading the page. */
+    fun applyPerformance(settings: PerformanceSettings, screeningFpsCap: Int) {
+        val resolved = PerformancePolicy.resolve(context, settings, screeningFpsCap)
+        pauseWhenHiddenLive = settings.pauseWhenNotVisible
+        policySuspended = resolved.initiallySuspended
+        presentation?.applyPerformance(
+            fpsCap = resolved.fpsCap,
+            blockExternalNetwork = settings.blockExternalNetwork,
+            allowLan = settings.allowLan,
+            pauseWhenHidden = settings.pauseWhenNotVisible,
+            policySuspended = resolved.initiallySuspended
+        )
+        mainHandler.removeCallbacks(deepSleepRunnable)
+        if (pauseWhenHiddenLive && !policySuspended && !failed && !contentVisible) {
+            mainHandler.postDelayed(deepSleepRunnable, DEEP_SLEEP_DELAY_MS)
+        }
+    }
+
+    fun setGeolocationEnabled(enabled: Boolean) {
+        presentation?.setGeolocationEnabled(enabled)
     }
 
     override fun onSurface(holder: SurfaceHolder, width: Int, height: Int) {
@@ -145,8 +171,8 @@ class WallpaperWebViewHost(
             networkBudgetPerMinute = networkBudgetPerMinute,
             blockExternalNetwork = blockExternalNetwork,
             allowLan = allowLan,
-            initiallySuspended = initiallySuspended,
-            pauseWhenHidden = pauseWhenHidden,
+            initiallySuspended = policySuspended,
+            pauseWhenHidden = pauseWhenHiddenLive,
             bundleId = bundleId,
             allowGeolocation = allowGeolocation,
             onHeartbeat = onHeartbeat,
@@ -210,6 +236,7 @@ class WallpaperWebViewHost(
     }
 
     override fun setVisible(visible: Boolean) {
+        contentVisible = visible
         if (visible) {
             mainHandler.removeCallbacks(deepSleepRunnable)
             if (deepSleeping) {
@@ -222,7 +249,7 @@ class WallpaperWebViewHost(
             presentation?.setContentVisible(visible)
         } else {
             presentation?.setContentVisible(false)
-            if (pauseWhenHidden && !failed) {
+            if (pauseWhenHiddenLive && !policySuspended && !failed) {
                 mainHandler.postDelayed(deepSleepRunnable, DEEP_SLEEP_DELAY_MS)
             }
         }
@@ -356,7 +383,7 @@ private class WallpaperPresentation(
     private val blockExternalNetwork: Boolean,
     private val allowLan: Boolean,
     private val initiallySuspended: Boolean,
-    private val pauseWhenHidden: Boolean,
+    private var pauseWhenHidden: Boolean,
     private val bundleId: String?,
     private val allowGeolocation: Boolean,
     private val onHeartbeat: () -> Unit,
@@ -370,6 +397,8 @@ private class WallpaperPresentation(
     private var pendingUrl: String? = null
     private var navRetried = false
     private var failed = false
+    private var contentVisible = true
+    private var policySuspended = initiallySuspended
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -424,6 +453,25 @@ private class WallpaperPresentation(
         webView?.let { BundleWebView.pushPropertyDebounced(it, key, value) }
     }
 
+    fun setGeolocationEnabled(enabled: Boolean) {
+        webView?.let { BundleWebView.setGeolocationEnabled(it, enabled) }
+    }
+
+    fun applyPerformance(
+        fpsCap: Int,
+        blockExternalNetwork: Boolean,
+        allowLan: Boolean,
+        pauseWhenHidden: Boolean,
+        policySuspended: Boolean
+    ) {
+        this.pauseWhenHidden = pauseWhenHidden
+        this.policySuspended = policySuspended
+        webView?.let {
+            BundleWebView.applyPerformance(it, fpsCap, blockExternalNetwork, allowLan)
+            syncVisibilityState(it)
+        }
+    }
+
     /**
      * Maps wallpaper visibility to WebView lifecycle + a JS suspend/resume hook.
      * [pauseWhenHidden] (the "Pause when wallpaper is not visible" Performance
@@ -433,10 +481,16 @@ private class WallpaperPresentation(
      * Android correctness requirement, not a soft preference.
      */
     fun setContentVisible(visible: Boolean) {
+        contentVisible = visible
         val wv = webView ?: return
-        if (visible) {
+        syncVisibilityState(wv)
+    }
+
+    private fun syncVisibilityState(wv: WebView) {
+        val renderAllowed = !policySuspended && (contentVisible || !pauseWhenHidden)
+        if (contentVisible && !policySuspended) {
             wv.onResume()
-            if (pauseWhenHidden) {
+            if (renderAllowed) {
                 WebViewTimers.setNeedsTimers(this, wv, true)
                 wv.evaluateJavascript("window.aetherDesk && window.aetherDesk.system.resume();", null)
                 // Re-arm with a fresh window (start() resets the last-seen
@@ -445,7 +499,7 @@ private class WallpaperPresentation(
             }
         } else {
             wv.onPause()
-            if (pauseWhenHidden) {
+            if (!renderAllowed) {
                 wv.evaluateJavascript("window.aetherDesk && window.aetherDesk.system.suspend();", null)
                 WebViewTimers.setNeedsTimers(this, wv, false)
                 // A paused bundle can't tick — silence while hidden isn't a
@@ -454,6 +508,9 @@ private class WallpaperPresentation(
                 // falsely demoted. Found by the reliability soak: a 19s
                 // hidden-tick gap was innocent, but 30s wouldn't have been.
                 watchdog.stop()
+            } else {
+                WebViewTimers.setNeedsTimers(this, wv, true)
+                wv.evaluateJavascript("window.aetherDesk && window.aetherDesk.system.resume();", null)
             }
         }
     }

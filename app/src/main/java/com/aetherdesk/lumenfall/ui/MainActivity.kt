@@ -27,10 +27,13 @@ import androidx.appcompat.app.AppCompatActivity
 import com.aetherdesk.lumenfall.R
 import com.aetherdesk.lumenfall.importer.BundleImporter
 import com.aetherdesk.lumenfall.render.ActiveBundleBus
+import com.aetherdesk.lumenfall.render.PerformanceSettingsBus
 import com.aetherdesk.lumenfall.service.LumenfallWallpaperService
 import com.aetherdesk.lumenfall.storage.AppSettingsStore
 import com.aetherdesk.lumenfall.storage.BundleMeta
 import com.aetherdesk.lumenfall.storage.BundleStore
+import com.aetherdesk.lumenfall.storage.BundledWallpapers
+import com.aetherdesk.lumenfall.storage.PerformanceSettings
 import com.aetherdesk.lumenfall.web.BundleThumbnailer
 import com.aetherdesk.lumenfall.web.ContactedDomains
 import kotlin.concurrent.thread
@@ -166,7 +169,7 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { setActiveAndPreview(meta) }
             // Bundled wallpapers can't be deleted — they ship with the app.
             setOnLongClickListener {
-                if (!com.aetherdesk.lumenfall.storage.BundledWallpapers.isBundled(meta.id)) {
+                if (!BundledWallpapers.isBundled(meta.id)) {
                     confirmDelete(meta); true
                 } else false
             }
@@ -221,7 +224,7 @@ class MainActivity : AppCompatActivity() {
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         column.addView(GlassUi.sectionHeader(this, "Performance"))
         column.addView(GlassUi.panel(this, buildInfoLine(
-            "Applies the next time a wallpaper loads (on selection, or after a restart) — not live to an already-running wallpaper."
+            "Applies immediately to the running wallpaper when Lumenfall is active."
         )))
 
         val settings = settingsStore.get()
@@ -231,28 +234,33 @@ class MainActivity : AppCompatActivity() {
             "Respect Low Power Mode",
             "Cap frame rate further while the system's battery saver is on.",
             settings.respectLowPowerMode
-        ) { v -> settingsStore.update { it.copy(respectLowPowerMode = v) } }))
+        ) { v -> updatePerformance { it.copy(respectLowPowerMode = v) } }))
         column.addView(GlassUi.panel(this, toggleControl(
             "Pause when wallpaper is not visible",
             "Stop rendering while another app covers the home screen. Strongly recommended for battery life.",
             settings.pauseWhenNotVisible
-        ) { v -> settingsStore.update { it.copy(pauseWhenNotVisible = v) } }))
+        ) { v -> updatePerformance { it.copy(pauseWhenNotVisible = v) } }))
         column.addView(GlassUi.panel(this, toggleControl(
             "Pause when on battery power",
             "Stop rendering entirely while the device isn't plugged in.",
             settings.pauseOnBattery
-        ) { v -> settingsStore.update { it.copy(pauseOnBattery = v) } }))
+        ) { v -> updatePerformance { it.copy(pauseOnBattery = v) } }))
         column.addView(GlassUi.panel(this, toggleControl(
             "Block external network requests",
             "Wallpapers can only read their own bundled files — no network access at all.",
             settings.blockExternalNetwork
-        ) { v -> settingsStore.update { it.copy(blockExternalNetwork = v) } }))
+        ) { v -> updatePerformance { it.copy(blockExternalNetwork = v) } }))
         column.addView(GlassUi.panel(this, toggleControl(
             "Allow local network (LAN) access",
             "When off, wallpapers can't reach private IP addresses (192.168.x.x, 10.x.x.x, etc.) or localhost.",
             settings.allowLan
-        ) { v -> settingsStore.update { it.copy(allowLan = v) } }))
+        ) { v -> updatePerformance { it.copy(allowLan = v) } }))
         return column
+    }
+
+    private fun updatePerformance(transform: (PerformanceSettings) -> PerformanceSettings) {
+        settingsStore.update(transform)
+        PerformanceSettingsBus.notifyChanged(settingsStore.get())
     }
 
     private fun buildInfoLine(text: String): View = TextView(this).apply {
@@ -273,7 +281,7 @@ class MainActivity : AppCompatActivity() {
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) {
                     if (skipFirst) { skipFirst = false; return }
-                    settingsStore.update { it.copy(fpsCap = values[position]) }
+                    updatePerformance { it.copy(fpsCap = values[position]) }
                 }
                 override fun onNothingSelected(parent: AdapterView<*>?) {}
             }
@@ -343,15 +351,36 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadPreview(meta: BundleMeta) =
-        if (com.aetherdesk.lumenfall.storage.BundledWallpapers.isBundled(meta.id)) {
-            // Bundled wallpapers have no on-disk preview; the thumbnailer will
-            // generate one from the asset (web capture) or return null.
-            null
+        if (BundledWallpapers.isBundled(meta.id)) {
+            bundledPreview(meta)
         } else {
             meta.previewPath?.let { rel ->
                 runCatching { BitmapFactory.decodeFile(store.fileFor(meta.id, rel).absolutePath) }.getOrNull()
             }
         }
+
+    private fun bundledPreview(meta: BundleMeta): android.graphics.Bitmap? {
+        val folder = BundledWallpapers.folderFor(meta.id) ?: return null
+        val candidates = listOfNotNull(
+            meta.previewPath,
+            "thumbnail.jpg",
+            "thumbnail.png",
+            "lively_t.jpg",
+            "preview.jpg",
+            "preview.png"
+        ).distinct()
+        for (rel in candidates) {
+            val bitmap = runCatching {
+                assets.open("wallpapers/$folder/${rel.trimStart('/')}").use { input ->
+                    BitmapFactory.decodeStream(input)
+                }
+            }.getOrNull()
+            if (bitmap != null) return bitmap
+        }
+        return BundleThumbnailer.bundledThumbnailFile(this, meta)
+            ?.takeIf { it.exists() }
+            ?.let { file -> BitmapFactory.decodeFile(file.absolutePath) }
+    }
 
     private fun setActiveAndPreview(meta: BundleMeta) {
         store.activeId = meta.id

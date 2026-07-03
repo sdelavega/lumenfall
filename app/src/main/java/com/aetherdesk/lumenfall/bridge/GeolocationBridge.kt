@@ -10,11 +10,10 @@ import java.lang.ref.WeakReference
 
 /**
  * The `window.aetherDeskGeo` native surface backing
- * `window.aetherDesk.geolocation.getCurrentPosition`. Registered on a WebView
- * only when [com.aetherdesk.lumenfall.web.GeolocationPolicy] passed at render
- * time — so a bundle the screener flagged "limited", or one the user hasn't
- * opted in per-bundle, never sees this object at all and the shim's promise
- * rejects `'disabled'`.
+ * `window.aetherDesk.geolocation.getCurrentPosition`. Registered on every
+ * bundle WebView so the per-bundle toggle can change without a reload; calls
+ * are still rejected unless [com.aetherdesk.lumenfall.web.GeolocationPolicy]
+ * currently allows the bundle.
  *
  * Call flow: bundle JS calls `aetherDesk.geolocation.getCurrentPosition(opts)`
  * (a Promise wrapper in the shim), which assigns a numeric callId, parks the
@@ -32,13 +31,23 @@ import java.lang.ref.WeakReference
 class GeolocationBridge(
     webView: WebView,
     private val provider: GeolocationProvider,
-    private val onLog: (String) -> Unit
+    private val onLog: (String) -> Unit,
+    initiallyEnabled: Boolean
 ) {
     private val webViewRef = WeakReference(webView)
     private val main = Handler(Looper.getMainLooper())
+    @Volatile private var enabled = initiallyEnabled
+
+    fun setEnabled(enabled: Boolean) {
+        this.enabled = enabled
+    }
 
     @JavascriptInterface
     fun request(callId: String, enableHighAccuracy: Boolean, timeoutMs: Int) {
+        if (!enabled) {
+            reject(callId, "disabled", "geolocation is disabled for this bundle")
+            return
+        }
         val wv = webViewRef.get()
         if (wv == null) {
             reject(callId, "unavailable", "webview gone")

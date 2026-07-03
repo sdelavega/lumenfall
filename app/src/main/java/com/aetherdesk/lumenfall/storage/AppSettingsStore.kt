@@ -8,11 +8,9 @@ import android.content.Context
  * Distinct from [BundleStore]'s per-bundle property overrides: these apply to
  * every wallpaper regardless of what its `LivelyProperties.json` declares.
  *
- * Applied as a snapshot at render time (when a bundle loads into the wallpaper
- * engine or the settings live preview), the same way import screening's limits
- * are — not as a live-reacting background daemon watching for e.g. a plug/
- * unplug event mid-session. Simpler and consistent with how the rest of the
- * app already treats "policy decided once, at load."
+ * Persisted here and also pushed through PerformanceSettingsBus by the UI so a
+ * running wallpaper can update its WebView policy immediately. Import screening
+ * remains a per-load limit; these user preferences are live controls.
  */
 data class PerformanceSettings(
     val fpsCap: Int = 30,

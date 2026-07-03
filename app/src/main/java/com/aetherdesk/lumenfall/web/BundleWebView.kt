@@ -61,11 +61,9 @@ object BundleWebView {
         /** When set, allowed external requests are recorded in [ContactedDomains]. */
         bundleId: String? = null,
         /**
-         * Wire the `window.aetherDesk.geolocation` bridge for this bundle. Must
-         * already have passed [GeolocationPolicy] at render time — this factory
-         * trusts the caller's snapshot and only re-checks the system permission
-         * per call (inside [GeolocationProvider]), since a wallpaper runs in the
-         * background and can't react to a mid-session revoke with a prompt.
+         * Initial `window.aetherDesk.geolocation` permission for this bundle.
+         * The native bridge stays registered so callers can flip the live gate
+         * with [setGeolocationEnabled] without reloading the page.
          */
         allowGeolocation: Boolean = false,
         onHeartbeat: () -> Unit = {},
@@ -108,21 +106,18 @@ object BundleWebView {
                 AetherDeskBridge(onHeartbeat = onHeartbeat, onLog = onLog),
                 "aetherDeskNative"
             )
-            // Geolocation: only register the native surface when the bundle
-            // passed the screening + per-bundle-toggle + permission gate (see
-            // GeolocationPolicy). A bundle that didn't never sees
-            // `window.aetherDeskGeo`, and the shim's promise rejects 'disabled'
-            // — the surface isn't there to call.
-            if (allowGeolocation) {
-                addJavascriptInterface(
-                    GeolocationBridge(
-                        webView = this,
-                        provider = GeolocationProvider(context.applicationContext),
-                        onLog = onLog
-                    ),
-                    "aetherDeskGeo"
-                )
-            }
+            // Geolocation: always register the native surface, but keep a
+            // mutable policy gate inside it. That lets the per-bundle toggle
+            // apply immediately while still rejecting disabled bundles at the
+            // native boundary.
+            val geoBridge = GeolocationBridge(
+                webView = this,
+                provider = GeolocationProvider(context.applicationContext),
+                onLog = onLog,
+                initiallyEnabled = allowGeolocation
+            )
+            addJavascriptInterface(geoBridge, "aetherDeskGeo")
+            geoBridges[this] = geoBridge
             // WebSocket DNS-rebinding guard: always registered for every web
             // bundle. Android's shouldInterceptRequest can't reach WebSocket
             // connections, so without this a hostname resolving to a private/
@@ -213,6 +208,7 @@ object BundleWebView {
                     }
                 }
             }
+            networkPolicies[this] = networkPolicy
         }
         if (docStartSupported) {
             WebViewCompat.addDocumentStartJavaScript(wv, shim, setOf(APP_ORIGIN))
@@ -225,6 +221,29 @@ object BundleWebView {
         val js = "window.aetherDesk && window.aetherDesk._setProperty(" +
             "${JSONObject.quote(key)}, ${jsLiteral(value)});"
         webView.evaluateJavascript(js, null)
+    }
+
+    /** Apply live global Performance settings to an already-running WebView. */
+    fun applyPerformance(
+        webView: WebView,
+        fpsCap: Int,
+        blockExternalNetwork: Boolean,
+        allowLan: Boolean
+    ) {
+        networkPolicies[webView]?.update(
+            blockAllExternal = blockExternalNetwork,
+            allowLan = allowLan
+        )
+        val cap = fpsCap.coerceIn(MIN_FPS, MAX_FPS)
+        webView.evaluateJavascript(
+            "window.aetherDesk && (window.aetherDesk.system.fpsCap = $cap);",
+            null
+        )
+    }
+
+    /** Apply the effective live geolocation policy for this WebView. */
+    fun setGeolocationEnabled(webView: WebView, enabled: Boolean) {
+        geoBridges[webView]?.setEnabled(enabled)
     }
 
     // --- Debounced property push ---------------------------------------------
@@ -240,6 +259,8 @@ object BundleWebView {
     )
 
     private val debounceStates = java.util.WeakHashMap<WebView, DebounceState>()
+    private val networkPolicies = java.util.WeakHashMap<WebView, WallpaperNetworkPolicy>()
+    private val geoBridges = java.util.WeakHashMap<WebView, GeolocationBridge>()
     private val debounceHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     /**
