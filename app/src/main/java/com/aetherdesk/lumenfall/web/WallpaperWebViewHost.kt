@@ -2,7 +2,9 @@ package com.aetherdesk.lumenfall.web
 
 import android.app.Presentation
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Matrix
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.os.Bundle
@@ -10,6 +12,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.Display
+import android.view.PixelCopy
 import android.view.SurfaceHolder
 import android.view.ViewGroup
 import android.webkit.WebView
@@ -71,7 +74,20 @@ class WallpaperWebViewHost(
     private var presentation: WallpaperPresentation? = null
     private var pendingUrl: String? = null
     private var lastSurfaceHolder: SurfaceHolder? = null
+    private var lastWidth = 0
+    private var lastHeight = 0
     private var failed = false
+
+    /**
+     * Deep-sleep: after the wallpaper has been hidden for an extended period,
+     * capture the last frame, tear down the VirtualDisplay + WebView (freeing
+     * its renderer process and display memory), and draw the frozen frame to
+     * the surface. On resume, everything is recreated. Ported from ÆtherDesk's
+     * paused-snapshot freeze; the Android equivalent of WKWebView.takeSnapshot
+     * + tearDown is PixelCopy + VirtualDisplay release.
+     */
+    private var deepSleeping = false
+    private val deepSleepRunnable = Runnable { enterDeepSleep() }
 
     /** Queue (or immediately load) the bundle entry point. */
     fun load(url: String) {
@@ -87,10 +103,14 @@ class WallpaperWebViewHost(
     override fun onSurface(holder: SurfaceHolder, width: Int, height: Int) {
         if (width <= 0 || height <= 0) return
         lastSurfaceHolder = holder
+        lastWidth = width
+        lastHeight = height
         if (failed) {
             renderFallback(holder)
             return
         }
+        deepSleeping = false
+        mainHandler.removeCallbacks(deepSleepRunnable)
         val existing = virtualDisplay
         if (existing == null) {
             attach(holder, width, height)
@@ -190,10 +210,94 @@ class WallpaperWebViewHost(
     }
 
     override fun setVisible(visible: Boolean) {
-        presentation?.setContentVisible(visible)
+        if (visible) {
+            mainHandler.removeCallbacks(deepSleepRunnable)
+            if (deepSleeping) {
+                deepSleeping = false
+                val holder = lastSurfaceHolder
+                if (holder != null && lastWidth > 0 && lastHeight > 0 && !failed) {
+                    attach(holder, lastWidth, lastHeight)
+                }
+            }
+            presentation?.setContentVisible(visible)
+        } else {
+            presentation?.setContentVisible(false)
+            if (pauseWhenHidden && !failed) {
+                mainHandler.postDelayed(deepSleepRunnable, DEEP_SLEEP_DELAY_MS)
+            }
+        }
     }
 
-    override fun onSurfaceDestroyed() = detach()
+    /**
+     * Capture the current frame from the wallpaper surface, tear down the
+     * VirtualDisplay + WebView, and draw the frozen frame back. The WebView's
+     * renderer process and display memory are released; on resume, [setVisible]
+     * recreates everything from [pendingUrl].
+     */
+    private fun enterDeepSleep() {
+        val holder = lastSurfaceHolder
+        if (holder == null || virtualDisplay == null || failed) return
+        val frame = holder.surfaceFrame
+        val w = frame.width()
+        val h = frame.height()
+        if (w <= 0 || h <= 0) {
+            detach()
+            deepSleeping = true
+            onLog("deep-sleep: surface has no size; tore down without snapshot")
+            return
+        }
+        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        try {
+            PixelCopy.request(holder.surface, bitmap, { result ->
+                detach()
+                if (result == PixelCopy.SUCCESS) {
+                    drawSnapshot(holder, bitmap)
+                    onLog("deep-sleep: entered (snapshot captured)")
+                } else {
+                    renderFallback(holder)
+                    onLog("deep-sleep: entered (PixelCopy failed: $result)")
+                }
+                deepSleeping = true
+            }, mainHandler)
+        } catch (e: Exception) {
+            detach()
+            renderFallback(holder)
+            deepSleeping = true
+            onLog("deep-sleep: entered (PixelCopy threw: ${e.message})")
+        }
+    }
+
+    /** Draw a captured bitmap to the wallpaper surface, filling it. */
+    private fun drawSnapshot(holder: SurfaceHolder, bitmap: Bitmap, attempt: Int = 0) {
+        val frame = holder.surfaceFrame
+        if (frame.width() <= 0 || frame.height() <= 0) return
+        val canvas = runCatching { holder.lockCanvas() }.getOrNull()
+        if (canvas == null) {
+            if (attempt < MAX_LOCK_ATTEMPTS) {
+                mainHandler.postDelayed({ drawSnapshot(holder, bitmap, attempt + 1) }, LOCK_RETRY_DELAY_MS)
+            } else {
+                onLog("deep-sleep: lockCanvas kept returning null; snapshot not drawn")
+            }
+            return
+        }
+        try {
+            val scale = maxOf(
+                frame.width().toFloat() / bitmap.width,
+                frame.height().toFloat() / bitmap.height
+            )
+            val matrix = Matrix().apply { setScale(scale, scale) }
+            canvas.drawColor(Color.BLACK)
+            canvas.drawBitmap(bitmap, matrix, null)
+        } finally {
+            holder.unlockCanvasAndPost(canvas)
+        }
+    }
+
+    override fun onSurfaceDestroyed() {
+        mainHandler.removeCallbacks(deepSleepRunnable)
+        deepSleeping = false
+        detach()
+    }
 
     /** Tear down the presentation + virtual display for the current surface. */
     fun detach() {
@@ -204,6 +308,8 @@ class WallpaperWebViewHost(
     }
 
     override fun release() {
+        mainHandler.removeCallbacks(deepSleepRunnable)
+        deepSleeping = false
         detach()
         pendingUrl = null
     }
@@ -221,6 +327,12 @@ class WallpaperWebViewHost(
         // taken on-device (one retry has sufficed in testing).
         const val MAX_LOCK_ATTEMPTS = 5
         const val LOCK_RETRY_DELAY_MS = 30L
+
+        // How long the wallpaper stays hidden before deep-sleep tears down
+        // the VirtualDisplay + WebView. Long enough that brief app-switches
+        // (notifications, quick settings) don't trigger it, short enough to
+        // reclaim memory during genuine disuse.
+        const val DEEP_SLEEP_DELAY_MS = 60_000L
     }
 }
 
