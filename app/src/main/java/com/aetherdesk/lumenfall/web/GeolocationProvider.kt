@@ -12,6 +12,7 @@ import android.os.Looper
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
+import java.util.Locale
 
 /**
  * Fetches the device's current location via the framework [LocationManager].
@@ -151,5 +152,20 @@ class GeolocationProvider(private val context: Context) {
         put("timestamp", loc.time)
         put("elapsedRealtimeNanos", loc.elapsedRealtimeNanos)
         put("provider", loc.provider ?: "unknown")
+        bestEffortLabel(loc)?.let { put("label", it) }
     }
+
+    @Suppress("DEPRECATION")
+    private fun bestEffortLabel(loc: Location): String? = runCatching {
+        val geocoder = android.location.Geocoder(context, Locale.getDefault())
+        val address = geocoder.getFromLocation(loc.latitude, loc.longitude, 1)
+            ?.firstOrNull()
+            ?: return@runCatching null
+        val city = address.locality ?: address.subAdminArea ?: address.adminArea
+        val region = address.adminArea
+        listOfNotNull(city, region)
+            .distinct()
+            .joinToString(", ")
+            .ifBlank { null }
+    }.getOrNull()
 }

@@ -35,6 +35,9 @@ class LumenfallWallpaperService : WallpaperService() {
         private var lastHeight = 0
         private var lastVisible = false
         private var currentScreeningFpsCap = BundleWebView.DEFAULT_FPS_CAP
+        private var currentActiveId: String? = null
+        private var previousActiveId: String? = null
+        private var revertingAfterFailure = false
 
         override fun onCreate(surfaceHolder: SurfaceHolder) {
             super.onCreate(surfaceHolder)
@@ -83,6 +86,9 @@ class LumenfallWallpaperService : WallpaperService() {
          */
         private fun swapRenderer() {
             Log.d(TAG, "active bundle changed; swapping renderer in place")
+            if (!revertingAfterFailure) {
+                previousActiveId = currentActiveId
+            }
             PropertyBus.unregister(this) // webRenderer re-registers for the new bundle
             GeolocationBus.unregister(this) // webRenderer re-registers for the new bundle
             renderer?.release()
@@ -110,6 +116,7 @@ class LumenfallWallpaperService : WallpaperService() {
             val service = this@LumenfallWallpaperService
             val store = BundleStore(service)
             val active = store.active()
+            currentActiveId = active?.id
             val entry = active?.entryPath
             return when {
                 active != null && entry != null && active.kind == "video" -> {
@@ -167,7 +174,10 @@ class LumenfallWallpaperService : WallpaperService() {
                 bundleId = webBundle?.id,
                 allowGeolocation = allowGeolocation,
                 onHeartbeat = { Log.d(TAG, "web heartbeat") },
-                onLog = { Log.d(TAG, "web bridge: $it") }
+                onLog = { Log.d(TAG, "web bridge: $it") },
+                onUnrecoverable = {
+                    if (webBundle != null) restorePreviousBundleAfterFailure(webBundle.id)
+                }
             )
             if (webBundle != null) {
                 PropertyBus.register(this, webBundle.id) { key, value ->
@@ -181,6 +191,24 @@ class LumenfallWallpaperService : WallpaperService() {
             }
             host.load(url)
             return host
+        }
+
+        private fun restorePreviousBundleAfterFailure(failedId: String) {
+            val service = this@LumenfallWallpaperService
+            val store = BundleStore(service)
+            if (store.activeId != failedId) return
+
+            val restoreId = (previousActiveId ?: store.previousActiveId)
+                ?.takeIf { it != failedId && store.get(it) != null }
+            Log.w(TAG, "active bundle $failedId failed; restoring ${restoreId ?: "default"}")
+            revertingAfterFailure = true
+            try {
+                store.activeId = restoreId
+                store.previousActiveId = null
+                swapRenderer()
+            } finally {
+                revertingAfterFailure = false
+            }
         }
     }
 

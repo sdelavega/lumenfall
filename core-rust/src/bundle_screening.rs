@@ -176,6 +176,15 @@ fn inspect(js: &str, warnings: &mut Vec<String>, issues: &mut Vec<String>) {
     if js.contains("window.open(") || js.contains("window.open (") {
         issues.push("Attempts to open browser windows".to_string());
     }
+    if js.contains("location.replace(")
+        || js.contains("location.assign(")
+        || js.contains("window.location.replace(")
+        || js.contains("window.location.assign(")
+        || js.contains("location.href")
+        || js.contains("window.location =")
+    {
+        issues.push("Attempts top-level navigation (not appropriate for wallpapers)".to_string());
+    }
 }
 
 fn count(haystack: &str, needle: &str) -> usize {
@@ -260,6 +269,13 @@ mod tests {
     fn infinite_loop_rejects() {
         let report = BundleScreener::screen("while (true) { mine(); }");
         assert_eq!(report.classification, Classification::Rejected);
+    }
+
+    #[test]
+    fn top_level_navigation_rejects() {
+        let report = BundleScreener::screen("location.replace('missing.html');");
+        assert_eq!(report.classification, Classification::Rejected);
+        assert!(report.issues.iter().any(|w| w.contains("top-level navigation")));
     }
 
     #[test]

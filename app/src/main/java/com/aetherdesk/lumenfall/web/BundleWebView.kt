@@ -599,6 +599,9 @@ object BundleWebView {
             var p = _pendingFetches[resp.id];
             if (!p) return;
             delete _pendingFetches[resp.id];
+            if (p.signal && p.abortListener) {
+              try { p.signal.removeEventListener('abort', p.abortListener); } catch(e) {}
+            }
             if (resp.status === 0) {
               p.reject(new TypeError('Network request failed'));
               return;
@@ -622,6 +625,20 @@ object BundleWebView {
                 return new Promise(function(resolve, reject) {
                   var id = String(++_fetchId);
                   _pendingFetches[id] = { resolve: resolve, reject: reject };
+                  if (options && options.signal) {
+                    if (options.signal.aborted) {
+                      delete _pendingFetches[id];
+                      reject(new DOMException('The operation was aborted.', 'AbortError'));
+                      return;
+                    }
+                    var abortListener = function() {
+                      delete _pendingFetches[id];
+                      reject(new DOMException('The operation was aborted.', 'AbortError'));
+                    };
+                    options.signal.addEventListener('abort', abortListener, { once: true });
+                    _pendingFetches[id].abortListener = abortListener;
+                    _pendingFetches[id].signal = options.signal;
+                  }
                   try {
                     var hdrs = null;
                     if (options && options.headers) {
@@ -641,6 +658,10 @@ object BundleWebView {
                       hdrs
                     );
                   } catch(e) {
+                    var pending = _pendingFetches[id];
+                    if (pending && pending.signal && pending.abortListener) {
+                      try { pending.signal.removeEventListener('abort', pending.abortListener); } catch(ignore) {}
+                    }
                     delete _pendingFetches[id];
                     reject(new TypeError('Native fetch bridge unavailable'));
                   }
@@ -737,8 +758,9 @@ object BundleWebView {
                           latitude: pos.latitude, longitude: pos.longitude,
                           accuracy: pos.accuracy, altitude: pos.altitude || null,
                           altitudeAccuracy: pos.altitudeAccuracy || null,
+                          label: pos.label || null,
                           heading: pos.bearing || null, speed: pos.speed || null
-                        }, timestamp: pos.timestamp || Date.now() });
+                        }, label: pos.label || null, timestamp: pos.timestamp || Date.now() });
                       }, function(err) {
                         if (error) error({ code: 2, message: err.message || 'unavailable' });
                       });
@@ -754,8 +776,9 @@ object BundleWebView {
                         }).then(function(pos) {
                           success({ coords: {
                             latitude: pos.latitude, longitude: pos.longitude,
-                            accuracy: pos.accuracy
-                          }, timestamp: pos.timestamp || Date.now() });
+                            accuracy: pos.accuracy,
+                            label: pos.label || null
+                          }, label: pos.label || null, timestamp: pos.timestamp || Date.now() });
                         });
                       }, 30000);
                       return id;

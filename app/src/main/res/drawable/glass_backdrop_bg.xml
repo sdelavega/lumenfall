@@ -1,7 +1,23 @@
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <gradient
-        android:type="linear"
-        android:angle="90"
-        android:startColor="@color/glass_backdrop_top"
-        android:endColor="@color/glass_backdrop_bottom" />
-</shape>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:type="linear"
+                android:angle="90"
+                android:startColor="@color/glass_backdrop_top"
+                android:endColor="@color/glass_backdrop_bottom" />
+        </shape>
+    </item>
+    <item android:drawable="@drawable/glass_backdrop_activity" />
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:type="radial"
+                android:centerX="72%"
+                android:centerY="22%"
+                android:gradientRadius="900dp"
+                android:startColor="@color/glass_accent_haze"
+                android:endColor="@android:color/transparent" />
+        </shape>
+    </item>
+</layer-list>

@@ -27,8 +27,8 @@ import com.google.android.material.button.MaterialButton
 /**
  * Shared Fluent dark/acrylic building blocks. Android does not expose Windows'
  * real acrylic blur for arbitrary programmatic views, so the resources below
- * approximate the material with dark translucent fills, compact radii, crisp
- * strokes, and a Tar Heel blue accent.
+ * approximate the material with translucent tint, frosted highlights, faint
+ * texture, compact radii, crisp strokes, and a Tar Heel blue accent.
  */
 object GlassUi {
     fun dp(context: Context, v: Int): Int = (v * context.resources.displayMetrics.density).toInt()
@@ -40,6 +40,16 @@ object GlassUi {
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
                 .apply { bottomMargin = dp(context, bottomMarginDp) }
             setPadding(dp(context, 16), dp(context, 14), dp(context, 16), dp(context, 14))
+            addView(inner)
+        }
+
+    /** Frosted note bubble for explanatory copy that should read as one object. */
+    fun noteBubble(context: Context, inner: View, bottomMarginDp: Int = 12): View =
+        FrameLayout(context).apply {
+            setBackgroundResource(R.drawable.glass_note_bubble_bg)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .apply { bottomMargin = dp(context, bottomMarginDp) }
+            setPadding(dp(context, 18), dp(context, 16), dp(context, 18), dp(context, 16))
             addView(inner)
         }
 
@@ -89,6 +99,23 @@ object GlassUi {
             setOnClickListener { onClick() }
         }
 
+    /** Slightly raised accent button for repeated row actions like Settings. */
+    fun settingsButton(context: Context, text: String, onClick: () -> Unit): MaterialButton =
+        MaterialButton(context).apply {
+            this.text = text
+            setTextColor(context.getColor(R.color.glass_text_primary))
+            backgroundTintList = null
+            setBackgroundResource(R.drawable.glass_settings_button_bg)
+            cornerRadius = dp(context, 7)
+            elevation = dp(context, 2).toFloat()
+            stateListAnimator = null
+            insetTop = 0
+            insetBottom = 0
+            minHeight = dp(context, 44)
+            setPadding(dp(context, 16), 0, dp(context, 16), 0)
+            setOnClickListener { onClick() }
+        }
+
     fun switchTints(context: Context): Pair<ColorStateList, ColorStateList> {
         val track = ColorStateList(
             arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
@@ -104,8 +131,16 @@ object GlassUi {
     /** A styled SwitchCompat — NOT Material's MaterialSwitch, whose default
      * style needs Material3 theme attributes this app's Material2 theme
      * doesn't define (renders invisible, then NPEs); see BundleSettingsActivity. */
-    fun switchControl(context: Context, checked: Boolean, onChange: (Boolean) -> Unit): SwitchCompat {
+    fun switchControl(
+        context: Context,
+        checked: Boolean,
+        label: String? = null,
+        onChange: (Boolean) -> Unit
+    ): SwitchCompat {
         val (track, thumb) = switchTints(context)
+        fun SwitchCompat.updateAccessibilityLabel(isOn: Boolean) {
+            if (label != null) contentDescription = "$label, ${if (isOn) "on" else "off"}"
+        }
         return SwitchCompat(context).apply {
             showText = false
             textOn = ""
@@ -113,7 +148,11 @@ object GlassUi {
             isChecked = checked
             trackTintList = track
             thumbTintList = thumb
-            setOnCheckedChangeListener { _, isChecked -> onChange(isChecked) }
+            updateAccessibilityLabel(checked)
+            setOnCheckedChangeListener { view, isChecked ->
+                (view as? SwitchCompat)?.updateAccessibilityLabel(isChecked)
+                onChange(isChecked)
+            }
         }
     }
 
@@ -135,8 +174,8 @@ object GlassUi {
         }
 
     fun styleSpinner(context: Context, spinner: Spinner) {
-        spinner.setBackgroundResource(R.drawable.glass_field_bg)
-        spinner.setPadding(dp(context, 12), dp(context, 10), dp(context, 12), dp(context, 10))
+        spinner.setBackgroundResource(R.drawable.glass_dropdown_bg)
+        spinner.setPadding(dp(context, 12), dp(context, 10), dp(context, 42), dp(context, 10))
         spinner.setPopupBackgroundResource(R.drawable.glass_popup_bg)
     }
 

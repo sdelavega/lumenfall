@@ -51,9 +51,15 @@ class MainActivity : AppCompatActivity() {
     private val store by lazy { BundleStore(this) }
     private val settingsStore by lazy { AppSettingsStore(this) }
     private lateinit var listContainer: LinearLayout
+    private var libraryScroll: ScrollView? = null
     private var libraryPane: View? = null
     private var settingsPane: View? = null
-    private var content: LinearLayout? = null
+    private var content: SplitPaneLayout? = null
+    private var selectedSettingsTab = SettingsTab.PERFORMANCE
+    private var settingsBody: LinearLayout? = null
+    private var performanceTabButton: View? = null
+    private var aboutTabButton: View? = null
+    private var pendingImportedId: String? = null
 
     // SAF document picker. content:// URIs need no storage permission.
     private val openDoc =
@@ -74,7 +80,7 @@ class MainActivity : AppCompatActivity() {
         libraryPane = buildLibraryPane()
         settingsPane = buildSettingsPane()
 
-        content = LinearLayout(this).apply {
+        content = SplitPaneLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f).apply { topMargin = dp(12) }
         }
         root.addView(content)
@@ -83,18 +89,27 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildLibraryPane(): View {
-        val importButton = GlassUi.primaryButton(this, "Import bundle (.zip)") {
+        val importButton = GlassUi.settingsButton(this, "Import bundle (.zip)") {
             // Many exporters mislabel zips; accept the proper type plus a wildcard.
             openDoc.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+        }.apply {
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(dp(18), 0, dp(18), 0)
+            layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, dp(44))
         }
         listContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val scroll = ScrollView(this).apply {
             addView(listContainer)
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f).apply { topMargin = dp(12) }
         }
+        libraryScroll = scroll
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(importButton)
+            addView(LinearLayout(this@MainActivity).apply {
+                gravity = Gravity.START
+                addView(importButton)
+            })
             addView(scroll)
         }
     }
@@ -104,10 +119,65 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 0, 0, dp(24))
         }
-        column.addView(buildPerformanceSection())
-        column.addView(GlassUi.sectionHeader(this, "About").apply { setPadding(0, dp(20), 0, dp(10)) })
-        column.addView(GlassUi.panel(this, buildAboutContent()))
+        column.addView(buildSettingsTabs())
+        settingsBody = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        column.addView(settingsBody)
+        updateSettingsTab()
         return ScrollView(this).apply { addView(column) }
+    }
+
+    private fun buildSettingsTabs(): View {
+        val tabs = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.BOTTOM or Gravity.START
+            setPadding(0, 0, 0, dp(10))
+        }
+        fun tabButton(tab: SettingsTab, label: String) =
+            TextView(this).apply {
+                text = label
+                tag = tab
+                isClickable = true
+                isFocusable = true
+                gravity = Gravity.CENTER
+                minHeight = dp(34)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                letterSpacing = 0.04f
+                setPadding(dp(18), 0, dp(18), 0)
+                setOnClickListener {
+                    selectedSettingsTab = tab
+                    updateSettingsTab()
+                }
+                if (tab == SettingsTab.PERFORMANCE) performanceTabButton = this else aboutTabButton = this
+                layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, dp(36)).apply {
+                    marginEnd = dp(4)
+                }
+            }
+        tabs.addView(tabButton(SettingsTab.PERFORMANCE, "Performance"))
+        tabs.addView(tabButton(SettingsTab.ABOUT, "About"))
+        return tabs
+    }
+
+    private fun updateSettingsTab() {
+        val body = settingsBody ?: return
+        body.removeAllViews()
+        body.addView(
+            when (selectedSettingsTab) {
+                SettingsTab.PERFORMANCE -> buildPerformanceSection()
+                SettingsTab.ABOUT -> GlassUi.noteBubble(this, buildAboutContent())
+            }
+        )
+        updateTabSelection()
+    }
+
+    private fun updateTabSelection() {
+        listOfNotNull(performanceTabButton, aboutTabButton).forEach { view ->
+            val selected = view.tag == selectedSettingsTab
+            view.isSelected = selected
+            (view as? TextView)?.setTextColor(getColor(R.color.glass_text_primary))
+            view.setBackgroundResource(
+                if (selected) R.drawable.glass_tab_selected_bg else R.drawable.glass_tab_bg
+            )
+        }
     }
 
     /** Flip between side-by-side (landscape) and stacked (portrait). */
@@ -120,17 +190,7 @@ class MainActivity : AppCompatActivity() {
         (settings.parent as? ViewGroup)?.removeView(settings)
 
         val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        if (landscape) {
-            c.orientation = LinearLayout.HORIZONTAL
-            // Wallpapers/import on the left, performance/about on the right.
-            c.addView(library, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f).apply { marginEnd = dp(12) })
-            c.addView(settings, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
-        } else {
-            c.orientation = LinearLayout.VERTICAL
-            // Wallpapers/import on top, performance/about on the bottom.
-            c.addView(library, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f).apply { bottomMargin = dp(12) })
-            c.addView(settings, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
-        }
+        c.setPanes(library, settings, landscape)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -155,7 +215,19 @@ class MainActivity : AppCompatActivity() {
             })
             return
         }
-        bundles.forEach { listContainer.addView(GlassUi.panel(this, rowFor(it, it.id == activeId), bottomMarginDp = 10)) }
+        var importedView: View? = null
+        val importedId = pendingImportedId
+        bundles.forEach { meta ->
+            val panel = GlassUi.panel(this, rowFor(meta, meta.id == activeId), bottomMarginDp = 10)
+            listContainer.addView(panel)
+            if (meta.id == importedId) importedView = panel
+        }
+        if (importedView != null) {
+            libraryScroll?.post {
+                importedView?.let { libraryScroll?.smoothScrollTo(0, it.top) }
+            }
+            pendingImportedId = null
+        }
         // Backfill thumbnails for bundles that didn't declare a preview image;
         // each one that lands re-renders the list so its tile fills in.
         BundleThumbnailer.generateMissing(this, store) { if (!isDestroyed) refresh() }
@@ -208,7 +280,7 @@ class MainActivity : AppCompatActivity() {
         // every web bundle regardless — its settings screen carries the live
         // preview and the contacted-domains transparency readout.
         if (meta.kind == "web" || store.properties(meta.id).isNotEmpty()) {
-            row.addView(GlassUi.flatButton(this, "Settings") {
+            row.addView(GlassUi.settingsButton(this, "Settings") {
                 startActivity(
                     Intent(this@MainActivity, BundleSettingsActivity::class.java)
                         .putExtra(BundleSettingsActivity.EXTRA_BUNDLE_ID, meta.id)
@@ -223,9 +295,7 @@ class MainActivity : AppCompatActivity() {
     private fun buildPerformanceSection(): View {
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         column.addView(GlassUi.sectionHeader(this, "Performance"))
-        column.addView(GlassUi.panel(this, buildInfoLine(
-            "Applies immediately to the running wallpaper when Lumenfall is active."
-        )))
+        column.addView(buildInfoLine("Applies immediately to the running wallpaper when Lumenfall is active."))
 
         val settings = settingsStore.get()
 
@@ -311,7 +381,7 @@ class MainActivity : AppCompatActivity() {
                 setPadding(0, dp(2), 0, 0)
             })
         })
-        row.addView(GlassUi.switchControl(this, checked, onChange))
+        row.addView(GlassUi.switchControl(this, checked, title, onChange))
         return row
     }
 
@@ -383,6 +453,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setActiveAndPreview(meta: BundleMeta) {
+        activationProblem(meta)?.let { problem ->
+            toast(problem)
+            return
+        }
+
+        store.previousActiveId = store.activeId
         store.activeId = meta.id
         refresh()
 
@@ -431,8 +507,10 @@ class MainActivity : AppCompatActivity() {
 
             runOnUiThread {
                 when (result) {
-                    is BundleImporter.Result.Ok ->
+                    is BundleImporter.Result.Ok -> {
+                        pendingImportedId = result.meta.id
                         toast("Imported '${result.meta.title}' (${result.meta.kind})")
+                    }
                     is BundleImporter.Result.Error ->
                         toast("Import failed: ${result.message}")
                 }
@@ -452,7 +530,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun dp(v: Int): Int = GlassUi.dp(this, v)
 
+    private fun activationProblem(meta: BundleMeta): String? {
+        if (BundledWallpapers.isBundled(meta.id)) return null
+        val entry = meta.entryPath ?: return "\"${meta.title}\" has no renderable entry file."
+        if (!store.fileFor(meta.id, entry).isFile) {
+            return "\"${meta.title}\" cannot be activated: missing $entry."
+        }
+        return null
+    }
+
     private companion object {
         val RENDERABLE_KINDS = setOf("web", "video", "image")
     }
+
+    private enum class SettingsTab { PERFORMANCE, ABOUT }
 }

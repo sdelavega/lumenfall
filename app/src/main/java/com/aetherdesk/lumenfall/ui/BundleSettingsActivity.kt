@@ -81,7 +81,7 @@ class BundleSettingsActivity : AppCompatActivity() {
     private var preview: WebView? = null
     private var previewContainer: View? = null
     private var formScroll: View? = null
-    private var content: LinearLayout? = null
+    private var content: SplitPaneLayout? = null
     private var governor: PerformanceGovernor? = null
 
     // Live state for the revert-on-overload flow.
@@ -155,9 +155,7 @@ class BundleSettingsActivity : AppCompatActivity() {
 
         val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         if (props.isEmpty()) {
-            form.addView(TextView(this).apply {
-                text = "This bundle has no configurable properties."
-                setTextColor(getColor(R.color.glass_text_secondary))
+            form.addView(noteText("This bundle has no configurable properties.").apply {
                 setPadding(0, dp(24), 0, 0)
             })
         } else {
@@ -170,17 +168,14 @@ class BundleSettingsActivity : AppCompatActivity() {
             // Network transparency, ported from ÆtherDesk: which external
             // domains this bundle has actually reached (allowed requests only;
             // blocked ones never left the device).
-            val label = TextView(this).apply {
-                setTextColor(getColor(R.color.glass_text_secondary))
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            }
+            val label = noteText("")
             domainsLabel = label
             updateDomainsLabel()
-            form.addView(glassPanel(label))
+            form.addView(label)
         }
         formScroll = ScrollView(this).apply { addView(form) }
 
-        content = LinearLayout(this).apply {
+        content = SplitPaneLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f).apply { topMargin = dp(12) }
         }
         root.addView(content)
@@ -198,17 +193,11 @@ class BundleSettingsActivity : AppCompatActivity() {
         (form.parent as? ViewGroup)?.removeView(form)
 
         val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        if (landscape) {
-            c.orientation = LinearLayout.HORIZONTAL
-            // Settings on the left, preview on the right.
-            c.addView(form, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f).apply { marginEnd = if (preview != null) dp(12) else 0 })
-            preview?.let { c.addView(it, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f)) }
-        } else {
-            c.orientation = LinearLayout.VERTICAL
-            // Preview on top, settings on the bottom.
-            preview?.let { c.addView(it, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f).apply { bottomMargin = dp(12) }) }
-            c.addView(form, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
-        }
+        c.setPanes(
+            first = if (landscape) form else preview ?: form,
+            second = if (landscape) preview else form.takeIf { preview != null },
+            landscape = landscape
+        )
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -295,16 +284,14 @@ class BundleSettingsActivity : AppCompatActivity() {
             // Limited / pre-screening bundle: explain why the option is absent
             // rather than silently omitting it, so a curious user isn't left
             // wondering where the toggle went.
-            return glassPanel(TextView(this).apply {
-                text = "Geolocation is unavailable for this bundle: it was flagged by " +
+            return noteText(
+                "Geolocation is unavailable for this bundle: it was flagged by " +
                     "import screening (or imported before screening existed), and " +
                     "location access requires a clean screening result."
-                setTextColor(getColor(R.color.glass_text_secondary))
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            })
+            )
         }
         val enabled = store.geolocationEnabled(bundleId)
-        val toggle = GlassUi.switchControl(this, enabled) { on ->
+        val toggle = GlassUi.switchControl(this, enabled, "Allow geolocation") { on ->
             if (on) {
                 val granted = ContextCompat.checkSelfPermission(
                     this, Manifest.permission.ACCESS_FINE_LOCATION
@@ -451,6 +438,15 @@ class BundleSettingsActivity : AppCompatActivity() {
         }
     }
 
+    private fun noteText(text: String): TextView = TextView(this).apply {
+        this.text = text
+        setTextColor(getColor(R.color.glass_text_secondary))
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
+            bottomMargin = dp(12)
+        }
+    }
+
     override fun onDestroy() {
         governor?.stop()
         PropertyBus.unregister(this)
@@ -578,14 +574,19 @@ class BundleSettingsActivity : AppCompatActivity() {
             textOn = ""
             textOff = ""
             isChecked = current as? Boolean ?: false
+            contentDescription = "${p.displayName}, ${if (isChecked) "on" else "off"}"
             trackTintList = onTint
             thumbTintList = thumbTint
-            listener = { _, checked -> apply(p.key, checked) }
+            listener = { view, checked ->
+                view.contentDescription = "${p.displayName}, ${if (checked) "on" else "off"}"
+                apply(p.key, checked)
+            }
             setOnCheckedChangeListener { view, checked -> listener(view, checked) }
         }
         liveControls[p.key] = { v ->
             toggle.setOnCheckedChangeListener(null)
             toggle.isChecked = v as? Boolean ?: false
+            toggle.contentDescription = "${p.displayName}, ${if (toggle.isChecked) "on" else "off"}"
             toggle.setOnCheckedChangeListener { view, checked -> listener(view, checked) }
         }
         return toggle
@@ -608,9 +609,7 @@ class BundleSettingsActivity : AppCompatActivity() {
         lateinit var listener: AdapterView.OnItemSelectedListener
         val spinner = Spinner(this).apply {
             adapter = glassSpinnerAdapter(items)
-            setBackgroundResource(R.drawable.glass_field_bg)
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            setPopupBackgroundResource(R.drawable.glass_popup_bg)
+            GlassUi.styleSpinner(this@BundleSettingsActivity, this)
             var skipFirst = true
             listener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) {
@@ -642,9 +641,7 @@ class BundleSettingsActivity : AppCompatActivity() {
         lateinit var listener: AdapterView.OnItemSelectedListener
         val spinner = Spinner(this).apply {
             adapter = glassSpinnerAdapter(labels)
-            setBackgroundResource(R.drawable.glass_field_bg)
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            setPopupBackgroundResource(R.drawable.glass_popup_bg)
+            GlassUi.styleSpinner(this@BundleSettingsActivity, this)
             var skipFirst = true
             listener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) {

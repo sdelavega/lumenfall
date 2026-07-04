@@ -249,19 +249,19 @@ function convertWind(v,from,to){
 // 15.4+) for a single-expression path; falls back to AbortController for older
 // WebKit versions bundled with macOS 12.
 //
-// IMPORTANT (AetherDesk-specific): the native fetch bridge that routes HTTP
-// requests through URLSession does NOT propagate the abort signal — it ignores
-// the {signal} option. This means the timeout does not abort an in-flight
-// URLSession task, but it also does not cause the Promise to hang: the native
-// bridge resolves its Promise independently when the network call completes.
-// The effective timeout for network calls is the URLSession task timeout (30s).
-function fetchWithTimeout(url,ms){
+// The native Android fetch bridge honors the abort signal at the JS Promise
+// layer. The underlying socket may still finish later, but Weather Aether can
+// move on to fallbacks promptly instead of sitting on a 30s read timeout.
+function fetchWithTimeout(url,ms,options){
+  options=options||{};
   if(typeof AbortSignal!=='undefined'&&typeof AbortSignal.timeout==='function'){
-    return fetch(url,{signal:AbortSignal.timeout(ms)});
+    options.signal=AbortSignal.timeout(ms);
+    return fetch(url,options);
   }
   var ctrl=new AbortController();
   setTimeout(function(){ctrl.abort();},ms);
-  return fetch(url,{signal:ctrl.signal});
+  options.signal=ctrl.signal;
+  return fetch(url,options);
 }
 
 
@@ -280,7 +280,7 @@ function cKey(){
   return null;
 }
 function cacheWeather(d){
-  var k=cKey();if(k){d._units=S.props.units;try{localStorage.setItem(k,JSON.stringify(d));}catch(e){}}
+  var k=cKey();if(k){d._units=d._units||S.props.units;try{localStorage.setItem(k,JSON.stringify(d));}catch(e){}}
 }
 function loadCachedWeather(){
   var k=cKey();if(!k)return null;
@@ -335,6 +335,13 @@ function autoLocation(){
           var alreadyResolved=done;
           done=true;clearTimeout(geoTimer);
           S.lat=p.coords.latitude;S.lon=p.coords.longitude;
+          var nativeLabel=p.label||(p.coords&&p.coords.label);
+          if(nativeLabel){
+            S.label=nativeLabel;cacheLocation();
+            if(!alreadyResolved){resolve(true);}
+            else{refreshWeather();}
+            return;
+          }
           reverseGeocode(S.lat,S.lon).then(function(label){
             S.label=label;cacheLocation();
             if(!alreadyResolved){resolve(true);}
@@ -461,6 +468,78 @@ function buildForecastUrl(){
   return url.toString();
 }
 
+function buildMetUrl(){
+  var url=new URL('https://api.met.no/weatherapi/locationforecast/2.0/compact');
+  url.searchParams.set('lat',String(Math.round(S.lat*10000)/10000));
+  url.searchParams.set('lon',String(Math.round(S.lon*10000)/10000));
+  return url.toString();
+}
+
+function metSymbolToWmo(symbol){
+  symbol=String(symbol||'').toLowerCase();
+  if(symbol.indexOf('thunder')>=0)return 95;
+  if(symbol.indexOf('snow')>=0||symbol.indexOf('sleet')>=0)return 71;
+  if(symbol.indexOf('rain')>=0)return 61;
+  if(symbol.indexOf('fog')>=0)return 45;
+  if(symbol.indexOf('cloudy')>=0)return symbol.indexOf('partly')>=0?2:3;
+  if(symbol.indexOf('fair')>=0)return 1;
+  return 0;
+}
+
+function normalizeMet(d){
+  var ts=d&&d.properties&&d.properties.timeseries;
+  if(!ts||!ts.length)throw new Error('MET response missing timeseries');
+  var now=Date.now();
+  var current=ts.reduce(function(best,item){
+    if(!best)return item;
+    return Math.abs(new Date(item.time).getTime()-now)<Math.abs(new Date(best.time).getTime()-now)?item:best;
+  },null);
+  var details=current.data.instant.details||{};
+  var symbol=((current.data.next_1_hours||current.data.next_6_hours||current.data.next_12_hours||{}).summary||{}).symbol_code;
+  var days={};
+  ts.forEach(function(item){
+    var key=item.time.slice(0,10);
+    var det=(item.data.instant&&item.data.instant.details)||{};
+    if(det.air_temperature==null)return;
+    var day=days[key]||(days[key]={temps:[],codes:[],precip:0});
+    day.temps.push(det.air_temperature);
+    var summary=((item.data.next_12_hours||item.data.next_6_hours||item.data.next_1_hours||{}).summary||{}).symbol_code;
+    day.codes.push(metSymbolToWmo(summary));
+    var amount=((item.data.next_6_hours||item.data.next_1_hours||{}).details||{}).precipitation_amount;
+    if(amount!=null&&amount>0)day.precip=Math.max(day.precip,60);
+  });
+  var keys=Object.keys(days).sort().slice(0,5);
+  return {
+    current:{
+      temperature_2m:details.air_temperature,
+      apparent_temperature:details.air_temperature,
+      relative_humidity_2m:Math.round(details.relative_humidity||0),
+      weather_code:metSymbolToWmo(symbol),
+      wind_speed_10m:(details.wind_speed||0)*3.6,
+      wind_direction_10m:details.wind_from_direction||0,
+      is_day:String(symbol||'').indexOf('_night')<0?1:0
+    },
+    daily:{
+      time:keys,
+      temperature_2m_max:keys.map(function(k){return Math.max.apply(null,days[k].temps);}),
+      temperature_2m_min:keys.map(function(k){return Math.min.apply(null,days[k].temps);}),
+      weather_code:keys.map(function(k){return days[k].codes[0]||0;}),
+      sunrise:keys.map(function(){return'';}),
+      sunset:keys.map(function(){return'';}),
+      precipitation_probability_max:keys.map(function(k){return days[k].precip;}),
+      uv_index_max:keys.map(function(){return null;})
+    },
+    _src:'met.no',
+    _units:'metric'
+  };
+}
+
+function fetchMetFallback(){
+  return fetchWithTimeout(buildMetUrl(),6000,{headers:{'User-Agent':'Lumenfall/0.1 (Android live wallpaper)'}})
+    .then(function(r){return r.ok?r.json():Promise.reject(new Error('MET '+r.status));})
+    .then(normalizeMet);
+}
+
 
 // ── refreshWeather() ─────────────────────────────────────────────────────────
 // Fetches fresh weather data and updates the display. The main data pipeline:
@@ -505,6 +584,14 @@ function refreshWeather(){
       applyWeather(d);
     })
     .catch(function(){
+      return fetchMetFallback().then(function(d){
+        if(mySeq!==S.fetchSeq)return;
+        d._ts=Date.now();
+        cacheWeather(d);
+        S.staleTime=null;
+        hidePill();
+        applyWeather(d);
+      },function(){
       if(mySeq!==S.fetchSeq)return;
       if(cached){
         S.staleTime=cached._ts||Date.now();
@@ -514,6 +601,7 @@ function refreshWeather(){
         S.staleTime=Date.now();
         showPill('waiting for weather\u2026');
       }
+      });
     })
     .finally(function(){scheduleRefresh();});
 }
@@ -542,8 +630,10 @@ function applyWeather(d){
   // cache, so fresh, stale, and on-launch cached displays all credit the source
   // that genuinely produced the numbers on screen. Absent (older cache / OSS
   // build with no WeatherKit), leave the existing flag untouched.
-  if(d&&d._src==='weatherkit')window.__weatherKitActive=true;
-  else if(d&&d._src==='open-meteo')window.__weatherKitActive=false;
+  if(d&&d._src){
+    window.__weatherSource=d._src;
+    window.__weatherKitActive=d._src==='weatherkit';
+  }
   var cur=d.current;
   var daily=d.daily;
   if(cur.is_day!==undefined)S.isDay=cur.is_day===1;
@@ -1146,7 +1236,8 @@ function applyAccentColor(){
 function setupAttribution(){
   var el=document.getElementById('wa-attribution');
   if(!el)return;
-  el.textContent=window.__weatherKitActive?' Weather':'Open-Meteo';
+  el.textContent=window.__weatherSource==='met.no'?'MET Norway':
+    (window.__weatherKitActive?' Weather':'Open-Meteo');
 }
 
 function showPill(msg){

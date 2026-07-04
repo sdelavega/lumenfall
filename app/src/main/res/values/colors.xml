@@ -1,21 +1,34 @@
 <resources>
     <!-- Fluent dark acrylic palette. Android does not expose system acrylic blur
          for arbitrary programmatic views, so these resources approximate it with
-         dark translucent surfaces, subtle blue-tinted borders, compact radii,
-         and a single Tar Heel blue accent. -->
+         translucent tint layers, frosted highlights, faint texture, compact
+         radii, and a single Tar Heel blue accent. -->
     <color name="glass_backdrop_top">#080B10</color>
     <color name="glass_backdrop_bottom">#111820</color>
 
-    <color name="glass_panel_fill_top">#D0161B22</color>
-    <color name="glass_panel_fill_bottom">#B80F141B</color>
-    <color name="glass_panel_stroke">#594B9CD3</color>
+    <color name="glass_panel_fill_top">#5F8D9AA6</color>
+    <color name="glass_panel_fill_bottom">#4846535F</color>
+    <color name="glass_panel_stroke">#34DCEAF0</color>
+    <color name="glass_panel_inner_glow">#22FFFFFF</color>
+    <color name="glass_panel_lift_shadow">#5A071018</color>
+    <color name="glass_panel_frost">#1EFFFFFF</color>
+    <color name="glass_panel_cloud">#12FFFFFF</color>
 
-    <color name="glass_field_fill">#CC1B222B</color>
-    <color name="glass_field_stroke">#3D9BC4E2</color>
+    <color name="glass_field_fill">#6046535F</color>
+    <color name="glass_field_stroke">#30DCEAF0</color>
 
     <color name="glass_track_inactive">#4A5D6C78</color>
     <color name="glass_accent">#4B9CD3</color>
     <color name="glass_accent_dim">#334B9CD3</color>
+    <color name="glass_accent_soft">#254B9CD3</color>
+    <color name="glass_accent_haze">#184B9CD3</color>
+    <color name="glass_accent_tab_top">#664B9CD3</color>
+    <color name="glass_accent_tab_bottom">#2E4B9CD3</color>
+    <color name="glass_settings_button_top">#A856A9DE</color>
+    <color name="glass_settings_button_bottom">#8A3D8FC4</color>
+    <color name="glass_settings_button_stroke">#C764B4E4</color>
+    <color name="glass_settings_button_shadow">#92071118</color>
+    <color name="glass_settings_button_glint">#36FFFFFF</color>
 
     <!-- Floating popups (dropdown menus) sit over arbitrary content, not our
          own controlled dark backdrop, and the anchor view itself keeps
@@ -24,6 +37,9 @@
          Popups get a solid, opaque dark fill instead. -->
     <color name="glass_popup_fill">#F0141A22</color>
     <color name="glass_popup_highlight">#334B9CD3</color>
+    <color name="glass_splitter_fill">#C8A9D8F4</color>
+    <color name="glass_splitter_grip_fill">#B8202B36</color>
+    <color name="glass_splitter_dot_fill">#D8E5F5FF</color>
 
     <color name="glass_text_primary">#F6F8FB</color>
     <color name="glass_text_secondary">#A9B7C5</color>

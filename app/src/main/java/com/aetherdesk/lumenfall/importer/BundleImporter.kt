@@ -35,6 +35,11 @@ class BundleImporter(context: Context) {
             val validation = validateBundle(dir, infoFile)
                 ?: return fail(dir, "Could not validate bundle")
             if (!validation.ok) return fail(dir, validation.error ?: "Bundle is not supported")
+            validation.entryPath?.let { entryPath ->
+                if (!File(dir, entryPath).isFile) {
+                    return fail(dir, "Entry file is missing: $entryPath")
+                }
+            } ?: return fail(dir, "Bundle has no renderable entry file")
 
             // Web bundles run third-party script, so screen the collected JS/HTML
             // source through the Rust heuristics (trackers, miners, resource

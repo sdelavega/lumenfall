@@ -64,7 +64,8 @@ class WallpaperWebViewHost(
     /** Wire the geolocation bridge for this bundle (see [GeolocationPolicy]). */
     private val allowGeolocation: Boolean = false,
     private val onHeartbeat: () -> Unit = {},
-    private val onLog: (String) -> Unit = {}
+    private val onLog: (String) -> Unit = {},
+    private val onUnrecoverable: () -> Unit = {}
 ) : WallpaperRenderer {
     private val displayManager =
         context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
@@ -202,6 +203,7 @@ class WallpaperWebViewHost(
         onLog("bundle unrecoverable; showing static fallback")
         detach()
         lastSurfaceHolder?.let(::renderFallback)
+        onUnrecoverable()
     }
 
     /**

@@ -82,6 +82,7 @@ class BundleStore(context: Context) {
         bundleDir(id).deleteRecursively()
         prefs.edit().remove(geoKey(id)).apply()
         if (activeId == id) activeId = null
+        if (previousActiveId == id) previousActiveId = null
     }
 
     var activeId: String?
@@ -89,6 +90,14 @@ class BundleStore(context: Context) {
         set(value) {
             prefs.edit().apply {
                 if (value == null) remove(KEY_ACTIVE) else putString(KEY_ACTIVE, value)
+            }.apply()
+        }
+
+    var previousActiveId: String?
+        get() = prefs.getString(KEY_PREVIOUS_ACTIVE, null)
+        set(value) {
+            prefs.edit().apply {
+                if (value == null) remove(KEY_PREVIOUS_ACTIVE) else putString(KEY_PREVIOUS_ACTIVE, value)
             }.apply()
         }
 
@@ -212,6 +221,7 @@ class BundleStore(context: Context) {
         const val OVERRIDES_NAME = "overrides.json"
         const val SCREENING_NAME = "screening.json"
         private const val KEY_ACTIVE = "active_bundle_id"
+        private const val KEY_PREVIOUS_ACTIVE = "previous_active_bundle_id"
         private const val KEY_GEO_PREFIX = "geo_bundle_"
     }
 }
