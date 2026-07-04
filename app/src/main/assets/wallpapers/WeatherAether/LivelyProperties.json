@@ -11,7 +11,7 @@
             "Name": "manualLocation",
             "Description": "City name or ZIP for manual mode",
             "Type": "textbox",
-            "Value": "20500"
+            "Value": ""
         },
         {
             "Name": "units",

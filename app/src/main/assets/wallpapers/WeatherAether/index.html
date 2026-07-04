@@ -211,7 +211,7 @@ var S={
   weather:null,staleTime:null,
   sunrise:null,sunset:null,isDay:true,
   props:{
-    locationMode:'auto',manualLocation:'20500',
+    locationMode:'auto',manualLocation:'',
     units:'imperial',forecastOpacity:0.9,
     animationSpeed:1.0,showParticles:true,accentColor:'#6fb8ff'
   },
@@ -596,7 +596,7 @@ function refreshWeather(){
       if(cached){
         S.staleTime=cached._ts||Date.now();
         applyWeather(cached);
-        showPill('stale as of '+new Date(S.staleTime).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}));
+        showPill('using cached weather from '+new Date(S.staleTime).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZoneName:'short'}));
       }else{
         S.staleTime=Date.now();
         showPill('waiting for weather\u2026');

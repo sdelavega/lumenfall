@@ -6,16 +6,16 @@
     <color name="glass_backdrop_top">#080B10</color>
     <color name="glass_backdrop_bottom">#111820</color>
 
-    <color name="glass_panel_fill_top">#5F8D9AA6</color>
-    <color name="glass_panel_fill_bottom">#4846535F</color>
-    <color name="glass_panel_stroke">#34DCEAF0</color>
-    <color name="glass_panel_inner_glow">#22FFFFFF</color>
-    <color name="glass_panel_lift_shadow">#5A071018</color>
-    <color name="glass_panel_frost">#1EFFFFFF</color>
+    <color name="glass_panel_fill_top">#6795A2AE</color>
+    <color name="glass_panel_fill_bottom">#4C46535F</color>
+    <color name="glass_panel_stroke">#32DCEAF0</color>
+    <color name="glass_panel_inner_glow">#1EFFFFFF</color>
+    <color name="glass_panel_lift_shadow">#30071118</color>
+    <color name="glass_panel_frost">#18FFFFFF</color>
     <color name="glass_panel_cloud">#12FFFFFF</color>
 
     <color name="glass_field_fill">#6046535F</color>
-    <color name="glass_field_stroke">#30DCEAF0</color>
+    <color name="glass_field_stroke">#28DCEAF0</color>
 
     <color name="glass_track_inactive">#4A5D6C78</color>
     <color name="glass_accent">#4B9CD3</color>
@@ -42,6 +42,7 @@
     <color name="glass_splitter_dot_fill">#D8E5F5FF</color>
 
     <color name="glass_text_primary">#F6F8FB</color>
+    <color name="glass_text_body">#D8E3EC</color>
     <color name="glass_text_secondary">#A9B7C5</color>
     <color name="glass_text_on_accent">#071018</color>
 

@@ -12,6 +12,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.Display
+import android.view.MotionEvent
 import android.view.PixelCopy
 import android.view.SurfaceHolder
 import android.view.ViewGroup
@@ -125,6 +126,11 @@ class WallpaperWebViewHost(
 
     fun setGeolocationEnabled(enabled: Boolean) {
         presentation?.setGeolocationEnabled(enabled)
+    }
+
+    override fun onTouchEvent(event: MotionEvent) {
+        if (failed || deepSleeping) return
+        presentation?.dispatchWallpaperTouch(event)
     }
 
     override fun onSurface(holder: SurfaceHolder, width: Int, height: Int) {
@@ -457,6 +463,17 @@ private class WallpaperPresentation(
 
     fun setGeolocationEnabled(enabled: Boolean) {
         webView?.let { BundleWebView.setGeolocationEnabled(it, enabled) }
+    }
+
+    fun dispatchWallpaperTouch(event: MotionEvent) {
+        val wv = webView ?: return
+        val forwarded = MotionEvent.obtain(event)
+        try {
+            forwarded.setLocation(event.x.coerceIn(0f, wv.width.toFloat()), event.y.coerceIn(0f, wv.height.toFloat()))
+            wv.dispatchTouchEvent(forwarded)
+        } finally {
+            forwarded.recycle()
+        }
     }
 
     fun applyPerformance(

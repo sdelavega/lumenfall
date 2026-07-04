@@ -153,7 +153,7 @@ class SplitPaneLayout(context: Context) : LinearLayout(context) {
 
     private companion object {
         const val TOUCH_SIZE_DP = 18
-        const val LINE_SIZE_DP = 2
+        const val LINE_SIZE_DP = 1
         const val GRIP_LONG_DP = 36
         const val GRIP_CROSS_DP = 14
         const val MIN_FRACTION = 0.25f

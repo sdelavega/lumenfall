@@ -196,11 +196,13 @@ class MainActivity : AppCompatActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         relayout()
+        libraryScroll?.post { snapLibraryScrollToNearestRow() }
     }
 
     override fun onResume() {
         super.onResume()
         refresh()
+        libraryScroll?.postDelayed({ snapLibraryScrollToNearestRow() }, 200)
     }
 
     private fun refresh() {
@@ -295,7 +297,6 @@ class MainActivity : AppCompatActivity() {
     private fun buildPerformanceSection(): View {
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         column.addView(GlassUi.sectionHeader(this, "Performance"))
-        column.addView(buildInfoLine("Applies immediately to the running wallpaper when Lumenfall is active."))
 
         val settings = settingsStore.get()
 
@@ -325,6 +326,13 @@ class MainActivity : AppCompatActivity() {
             "When off, wallpapers can't reach private IP addresses (192.168.x.x, 10.x.x.x, etc.) or localhost.",
             settings.allowLan
         ) { v -> updatePerformance { it.copy(allowLan = v) } }))
+        column.addView(buildInfoLine("Applies immediately to the running wallpaper when Lumenfall is active.").apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
+                topMargin = dp(10)
+                leftMargin = dp(2)
+                rightMargin = dp(2)
+            }
+        })
         return column
     }
 
@@ -341,7 +349,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun fpsCapControl(current: Int): View {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        box.addView(GlassUi.label(this, "Default FPS cap"))
+        box.addView(TextView(this).apply {
+            text = "Default FPS cap"
+            setTextColor(getColor(R.color.glass_text_primary))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setPadding(0, 0, 0, dp(6))
+        })
         val values = listOf(15, 30, 60)
         val items = values.map { "$it fps" }
         val spinner = Spinner(this).apply {
@@ -398,7 +411,7 @@ class MainActivity : AppCompatActivity() {
         column.addView(TextView(this).apply {
             text = "A Lively-compatible live wallpaper host for Android tablets, with an " +
                 "embedded Rust core for bundle parsing, validation, and content screening."
-            setTextColor(getColor(R.color.glass_text_secondary))
+            setTextColor(getColor(R.color.glass_text_body))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setPadding(0, dp(8), 0, 0)
         })
@@ -406,14 +419,14 @@ class MainActivity : AppCompatActivity() {
             text = "Sibling project to ÆtherDesk (macOS) — same bundle format and property " +
                 "bridge contract, ported practical limits (import screening, fps caps, " +
                 "network policy)."
-            setTextColor(getColor(R.color.glass_text_secondary))
+            setTextColor(getColor(R.color.glass_text_body))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setPadding(0, dp(8), 0, 0)
         })
         column.addView(TextView(this).apply {
             text = "Wallpapers run sandboxed: no filesystem access, no ad/tracker/miner " +
                 "domains, and SSRF-protected network requests."
-            setTextColor(getColor(R.color.glass_text_secondary))
+            setTextColor(getColor(R.color.glass_text_body))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setPadding(0, dp(8), 0, 0)
         })
@@ -511,12 +524,34 @@ class MainActivity : AppCompatActivity() {
                         pendingImportedId = result.meta.id
                         toast("Imported '${result.meta.title}' (${result.meta.kind})")
                     }
-                    is BundleImporter.Result.Error ->
-                        toast("Import failed: ${result.message}")
+                    is BundleImporter.Result.Error -> {
+                        GlassUi.messageDialog(
+                            this,
+                            title = "Import Failed",
+                            message = result.message
+                        )
+                    }
                 }
                 refresh()
             }
         }
+    }
+
+    private fun snapLibraryScrollToNearestRow() {
+        val scroll = libraryScroll ?: return
+        if (listContainer.childCount == 0) return
+        val y = scroll.scrollY
+        var nearestTop = 0
+        var nearestDistance = Int.MAX_VALUE
+        for (i in 0 until listContainer.childCount) {
+            val child = listContainer.getChildAt(i)
+            val distance = kotlin.math.abs(child.top - y)
+            if (distance < nearestDistance) {
+                nearestDistance = distance
+                nearestTop = child.top
+            }
+        }
+        if (nearestDistance > 0) scroll.smoothScrollTo(0, nearestTop)
     }
 
     private fun displayName(uri: Uri): String? =

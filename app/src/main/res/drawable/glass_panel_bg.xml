@@ -1,30 +1,30 @@
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item>
+    <item android:left="1dp" android:top="2dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="8dp" />
+            <solid android:color="@color/glass_panel_lift_shadow" />
+        </shape>
+    </item>
+    <item android:right="1dp" android:bottom="1dp">
         <shape android:shape="rectangle">
             <corners android:radius="8dp" />
             <gradient
                 android:type="linear"
-                android:angle="90"
+                android:angle="270"
                 android:startColor="@color/glass_panel_fill_top"
                 android:endColor="@color/glass_panel_fill_bottom" />
             <stroke android:width="1dp" android:color="@color/glass_panel_stroke" />
         </shape>
     </item>
-    <item android:left="1dp" android:top="1dp" android:right="1dp">
+    <item android:right="1dp" android:bottom="1dp">
         <shape android:shape="rectangle">
             <corners android:radius="8dp" />
             <stroke android:width="1dp" android:color="@color/glass_panel_inner_glow" />
         </shape>
     </item>
-    <item android:left="1dp" android:right="1dp" android:top="1dp">
+    <item android:height="5dp" android:gravity="top" android:right="1dp" android:bottom="1dp">
         <shape android:shape="rectangle">
-            <corners android:radius="7dp" />
-            <stroke android:width="1dp" android:color="@color/glass_panel_lift_shadow" />
-        </shape>
-    </item>
-    <item android:height="4dp" android:gravity="top">
-        <shape android:shape="rectangle">
-            <corners android:radius="8dp" />
+            <corners android:topLeftRadius="8dp" android:topRightRadius="8dp" />
             <gradient
                 android:type="linear"
                 android:angle="270"
@@ -32,5 +32,5 @@
                 android:endColor="@android:color/transparent" />
         </shape>
     </item>
-    <item android:drawable="@drawable/glass_frost_speckles" />
+    <item android:drawable="@drawable/glass_frost_speckles" android:right="1dp" android:bottom="1dp" />
 </layer-list>

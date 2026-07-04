@@ -241,6 +241,49 @@ object GlassUi {
         dialog.show()
     }
 
+    /** Persistent informational dialog for errors that should not vanish like a toast. */
+    fun messageDialog(context: Context, title: String, message: String, buttonText: String = "OK") {
+        val dialog = Dialog(context)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(context, 20), dp(context, 20), dp(context, 20), dp(context, 16))
+        }
+        content.addView(TextView(context).apply {
+            text = title
+            setTextColor(context.getColor(R.color.glass_text_primary))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+        })
+        content.addView(TextView(context).apply {
+            text = message
+            setTextColor(context.getColor(R.color.glass_text_secondary))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setPadding(0, dp(context, 8), 0, 0)
+        })
+        content.addView(LinearLayout(context).apply {
+            gravity = Gravity.END
+            setPadding(0, dp(context, 20), 0, 0)
+            addView(MaterialButton(context).apply {
+                text = buttonText
+                setTextColor(context.getColor(R.color.glass_text_on_accent))
+                backgroundTintList = ColorStateList.valueOf(context.getColor(R.color.glass_accent))
+                cornerRadius = dp(context, 6)
+                elevation = 0f
+                insetTop = 0
+                insetBottom = 0
+                setOnClickListener { dialog.dismiss() }
+            })
+        })
+        dialog.setContentView(FrameLayout(context).apply {
+            setBackgroundResource(R.drawable.glass_popup_bg)
+            addView(content)
+            layoutParams = FrameLayout.LayoutParams(dp(context, 360), WRAP_CONTENT)
+        })
+        dialog.show()
+    }
+
     /** Transient message overlay replacing system Toast, styled to match. */
     fun toast(activity: Activity, message: String) {
         val root = activity.findViewById<ViewGroup>(android.R.id.content) ?: return

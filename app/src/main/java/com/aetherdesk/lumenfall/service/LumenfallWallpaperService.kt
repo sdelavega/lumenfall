@@ -2,6 +2,7 @@ package com.aetherdesk.lumenfall.service
 
 import android.service.wallpaper.WallpaperService
 import android.util.Log
+import android.view.MotionEvent
 import android.view.SurfaceHolder
 import com.aetherdesk.lumenfall.image.ImageWallpaperRenderer
 import com.aetherdesk.lumenfall.render.ActiveBundleBus
@@ -41,9 +42,15 @@ class LumenfallWallpaperService : WallpaperService() {
 
         override fun onCreate(surfaceHolder: SurfaceHolder) {
             super.onCreate(surfaceHolder)
+            setTouchEventsEnabled(true)
             renderer = createRenderer()
             ActiveBundleBus.register(this, ::swapRenderer)
             PerformanceSettingsBus.register(this, ::applyPerformanceSettings)
+        }
+
+        override fun onTouchEvent(event: MotionEvent) {
+            super.onTouchEvent(event)
+            renderer?.onTouchEvent(event)
         }
 
         override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {

@@ -90,6 +90,7 @@ class BundleSettingsActivity : AppCompatActivity() {
     private val displayNames = mutableMapOf<String, String>()
     private var pendingChange: PendingChange? = null
     private var currentPreviewFpsCap = BundleWebView.DEFAULT_FPS_CAP
+    private var manualLocationField: EditText? = null
 
     // Contacted-domains transparency readout (web bundles). The embedded
     // preview (and the home-screen engine, same process) contact domains
@@ -229,6 +230,7 @@ class BundleSettingsActivity : AppCompatActivity() {
         currentValues[key] = value
         store.setOverride(bundleId, key, value)
         PropertyBus.notify(bundleId, key, value)
+        if (key == "locationMode") updateManualLocationState()
     }
 
     /** Revert the most recent change if one happened recently. Returns false if there was nothing eligible. */
@@ -481,8 +483,7 @@ class BundleSettingsActivity : AppCompatActivity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setPadding(0, 0, 0, dp(6))
         })
-        box.addView(
-            when (p.type.lowercase()) {
+        val control = when (p.type.lowercase()) {
                 "slider" -> sliderControl(p, current)
                 "checkbox" -> switchControl(p, current)
                 "dropdown" -> dropdownControl(p, current)
@@ -500,8 +501,20 @@ class BundleSettingsActivity : AppCompatActivity() {
                 }
                 else -> textControl(p, current) // textbox + unknown -> editable text
             }
-        )
+        if (p.key == "manualLocation") {
+            manualLocationField = control as? EditText
+            updateManualLocationState()
+        }
+        box.addView(control)
         return box
+    }
+
+    private fun updateManualLocationState() {
+        val edit = manualLocationField ?: return
+        val manual = currentValues["locationMode"] == "manual"
+        edit.isEnabled = manual
+        edit.alpha = if (manual) 1f else 0.55f
+        edit.hint = if (manual) "City name or ZIP" else "Ignored while location mode is auto"
     }
 
     private fun sliderControl(p: BundleProperty, current: Any?): View {
