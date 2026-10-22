@@ -82,7 +82,6 @@ class WallpaperWebViewHost(
     private var lastWidth = 0
     private var lastHeight = 0
     private var failed = false
-    private var contentVisible = false
     private var pauseWhenHiddenLive = pauseWhenHidden
     private var policySuspended = initiallySuspended
 
@@ -96,6 +95,17 @@ class WallpaperWebViewHost(
      */
     private var deepSleeping = false
     private val deepSleepRunnable = Runnable { enterDeepSleep() }
+
+    /** Deep-sleep is armed only by a real hide (never by creation-time state); see [DeepSleepScheduler]. */
+    private val deepSleepScheduler = DeepSleepScheduler(
+        schedule = { delayMs, _ ->
+            if (pauseWhenHiddenLive && !policySuspended && !failed) {
+                mainHandler.postDelayed(deepSleepRunnable, delayMs)
+            }
+        },
+        cancel = { mainHandler.removeCallbacks(deepSleepRunnable) },
+        delayMs = { DEEP_SLEEP_DELAY_MS }
+    )
 
     /** Queue (or immediately load) the bundle entry point. */
     fun load(url: String) {
@@ -120,10 +130,7 @@ class WallpaperWebViewHost(
             pauseWhenHidden = settings.pauseWhenNotVisible,
             policySuspended = resolved.initiallySuspended
         )
-        mainHandler.removeCallbacks(deepSleepRunnable)
-        if (pauseWhenHiddenLive && !policySuspended && !failed && !contentVisible) {
-            mainHandler.postDelayed(deepSleepRunnable, DEEP_SLEEP_DELAY_MS)
-        }
+        deepSleepScheduler.onPerformanceChanged()
     }
 
     fun setGeolocationEnabled(enabled: Boolean) {
@@ -145,7 +152,7 @@ class WallpaperWebViewHost(
             return
         }
         deepSleeping = false
-        mainHandler.removeCallbacks(deepSleepRunnable)
+        deepSleepScheduler.cancelPending()
         val existing = virtualDisplay
         if (existing == null) {
             attach(holder, width, height)
@@ -172,6 +179,7 @@ class WallpaperWebViewHost(
         }
         virtualDisplay = vd
 
+        var presRef: WallpaperPresentation? = null
         val pres = WallpaperPresentation(
             outerContext = context,
             targetDisplay = vd.display,
@@ -186,8 +194,13 @@ class WallpaperWebViewHost(
             allowGeolocation = allowGeolocation,
             onHeartbeat = onHeartbeat,
             onLog = onLog,
-            onIrrecoverable = ::markFailed
+            onIrrecoverable = {
+                // Fired from a WebView-internal thread (render-process-gone) or
+                // the watchdog; all host state is main-thread only, so hop first.
+                mainHandler.post { if (presentation === presRef) markFailed() }
+            }
         )
+        presRef = pres
         pendingUrl?.let(pres::load)
         try {
             pres.show()
@@ -208,6 +221,7 @@ class WallpaperWebViewHost(
     private fun markFailed() {
         if (failed) return
         failed = true
+        deepSleepScheduler.cancelPending()
         onLog("bundle unrecoverable; showing static fallback")
         detach()
         lastSurfaceHolder?.let(::renderFallback)
@@ -246,9 +260,8 @@ class WallpaperWebViewHost(
     }
 
     override fun setVisible(visible: Boolean) {
-        contentVisible = visible
+        deepSleepScheduler.onVisibilityChanged(visible)
         if (visible) {
-            mainHandler.removeCallbacks(deepSleepRunnable)
             if (deepSleeping) {
                 deepSleeping = false
                 val holder = lastSurfaceHolder
@@ -259,9 +272,6 @@ class WallpaperWebViewHost(
             presentation?.setContentVisible(visible)
         } else {
             presentation?.setContentVisible(false)
-            if (pauseWhenHiddenLive && !policySuspended && !failed) {
-                mainHandler.postDelayed(deepSleepRunnable, DEEP_SLEEP_DELAY_MS)
-            }
         }
     }
 
@@ -283,36 +293,53 @@ class WallpaperWebViewHost(
             onLog("deep-sleep: surface has no size; tore down without snapshot")
             return
         }
-        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        // Allocate immediately before the request (~16 MB at full-screen size)
+        // and recycle on every path that doesn't hand it to drawSnapshot.
+        var bitmap: Bitmap? = null
         try {
-            PixelCopy.request(holder.surface, bitmap, { result ->
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            bitmap = bmp
+            PixelCopy.request(holder.surface, bmp, { result ->
                 detach()
                 if (result == PixelCopy.SUCCESS) {
-                    drawSnapshot(holder, bitmap)
+                    drawSnapshot(holder, bmp) // recycles bmp when finished
                     onLog("deep-sleep: entered (snapshot captured)")
                 } else {
+                    bmp.recycle()
                     renderFallback(holder)
                     onLog("deep-sleep: entered (PixelCopy failed: $result)")
                 }
                 deepSleeping = true
             }, mainHandler)
+            bitmap = null // ownership passed to the callback
         } catch (e: Exception) {
             detach()
             renderFallback(holder)
             deepSleeping = true
             onLog("deep-sleep: entered (PixelCopy threw: ${e.message})")
+        } catch (e: OutOfMemoryError) {
+            detach()
+            renderFallback(holder)
+            deepSleeping = true
+            onLog("deep-sleep: entered (no memory for snapshot)")
+        } finally {
+            bitmap?.recycle()
         }
     }
 
     /** Draw a captured bitmap to the wallpaper surface, filling it. */
     private fun drawSnapshot(holder: SurfaceHolder, bitmap: Bitmap, attempt: Int = 0) {
         val frame = holder.surfaceFrame
-        if (frame.width() <= 0 || frame.height() <= 0) return
+        if (frame.width() <= 0 || frame.height() <= 0) {
+            bitmap.recycle()
+            return
+        }
         val canvas = runCatching { holder.lockCanvas() }.getOrNull()
         if (canvas == null) {
             if (attempt < MAX_LOCK_ATTEMPTS) {
                 mainHandler.postDelayed({ drawSnapshot(holder, bitmap, attempt + 1) }, LOCK_RETRY_DELAY_MS)
             } else {
+                bitmap.recycle()
                 onLog("deep-sleep: lockCanvas kept returning null; snapshot not drawn")
             }
             return
@@ -327,11 +354,12 @@ class WallpaperWebViewHost(
             canvas.drawBitmap(bitmap, matrix, null)
         } finally {
             holder.unlockCanvasAndPost(canvas)
+            bitmap.recycle()
         }
     }
 
     override fun onSurfaceDestroyed() {
-        mainHandler.removeCallbacks(deepSleepRunnable)
+        deepSleepScheduler.cancelPending()
         deepSleeping = false
         detach()
     }
@@ -345,7 +373,7 @@ class WallpaperWebViewHost(
     }
 
     override fun release() {
-        mainHandler.removeCallbacks(deepSleepRunnable)
+        deepSleepScheduler.cancelPending()
         deepSleeping = false
         detach()
         pendingUrl = null
@@ -407,7 +435,7 @@ private class WallpaperPresentation(
     private var pendingUrl: String? = null
     private var navRetried = false
     private var failed = false
-    private var contentVisible = true
+    @Volatile private var contentVisible = true
     private var policySuspended = initiallySuspended
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -422,12 +450,12 @@ private class WallpaperPresentation(
             initiallySuspended = initiallySuspended,
             bundleId = bundleId,
             allowGeolocation = allowGeolocation,
-            onHeartbeat = { watchdog.poke(); onHeartbeat() },
+            onHeartbeat = { pokeIfVisible(); onHeartbeat() },
             onLog = { message ->
-                if (message.contains("\"tick\"")) watchdog.poke()
+                if (message.contains("\"tick\"")) pokeIfVisible()
                 onLog(message)
             },
-            onPageLoaded = { watchdog.poke() },
+            onPageLoaded = { pokeIfVisible() },
             onRenderProcessGone = ::handleRenderProcessGone,
             onMainFrameLoadFailed = ::handleLoadFailure
         ).apply {
@@ -451,6 +479,11 @@ private class WallpaperPresentation(
         WebViewTimers.setNeedsTimers(this, wv, true)
         pendingUrl?.let(wv::loadUrl)
         watchdog.start()
+    }
+
+    /** Ticks/heartbeats that arrive while hidden are ignored: the watchdog is stopped then. */
+    private fun pokeIfVisible() {
+        if (contentVisible) watchdog.poke()
     }
 
     fun load(url: String) {

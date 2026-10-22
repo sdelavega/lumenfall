@@ -32,7 +32,7 @@ class WallpaperWatchdog(
     private val handler = Handler(Looper.getMainLooper())
     private val checkRunnable = ::check
 
-    private var lastSeenAt = 0L
+    @Volatile private var lastSeenAt = 0L
     private var running = false
     private var fired = false
 
