@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.sdelavega.lumenfall.render
 
+import androidx.annotation.VisibleForTesting
+
 /**
  * Process-local signal that the active bundle selection changed. The picker
  * notifies after persisting the new active id; a live wallpaper engine, if one
@@ -12,10 +14,11 @@ package com.sdelavega.lumenfall.render
  * this is the coarser "the bundle itself changed" nudge. Same process-local
  * registry pattern: the wallpaper service and the picker share one process.
  *
- * Listeners are invoked on the caller's thread — in practice the main thread,
- * since the picker notifies from UI code and Engine callbacks live there too.
+ * Listeners are invoked on the main thread via [dispatcher].
  */
 object ActiveBundleBus {
+    @VisibleForTesting
+    internal var dispatcher: MainThreadDispatcher = AndroidMainDispatcher
 
     private val listeners = HashMap<Any, () -> Unit>()
 
@@ -31,6 +34,6 @@ object ActiveBundleBus {
 
     fun notifyChanged() {
         val snapshot = synchronized(this) { listeners.values.toList() }
-        snapshot.forEach { it() }
+        snapshot.forEach { listener -> dispatcher.dispatch { listener() } }
     }
 }

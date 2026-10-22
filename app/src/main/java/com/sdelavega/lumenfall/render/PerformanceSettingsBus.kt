@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.sdelavega.lumenfall.render
 
+import androidx.annotation.VisibleForTesting
 import com.sdelavega.lumenfall.storage.PerformanceSettings
 
 /**
@@ -13,6 +14,9 @@ object PerformanceSettingsBus {
     fun interface Listener {
         fun onSettings(settings: PerformanceSettings)
     }
+
+    @VisibleForTesting
+    internal var dispatcher: MainThreadDispatcher = AndroidMainDispatcher
 
     private val listeners = HashMap<Any, Listener>()
 
@@ -28,6 +32,6 @@ object PerformanceSettingsBus {
 
     fun notifyChanged(settings: PerformanceSettings) {
         val snapshot = synchronized(this) { listeners.values.toList() }
-        snapshot.forEach { it.onSettings(settings) }
+        snapshot.forEach { listener -> dispatcher.dispatch { listener.onSettings(settings) } }
     }
 }

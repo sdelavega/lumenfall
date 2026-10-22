@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.sdelavega.lumenfall.render
 
+import androidx.annotation.VisibleForTesting
+
 /**
  * Process-local fan-out of live property changes from the settings UI to running
  * renderers. The wallpaper service and the settings Activity share one process,
@@ -20,6 +22,9 @@ object PropertyBus {
         fun onProperty(key: String, value: Any?)
     }
 
+    @VisibleForTesting
+    internal var dispatcher: MainThreadDispatcher = AndroidMainDispatcher
+
     private val listeners = HashMap<Any, Pair<String, Listener>>()
 
     @Synchronized
@@ -32,10 +37,10 @@ object PropertyBus {
         listeners.remove(token)
     }
 
-    @Synchronized
     fun notify(bundleId: String, key: String, value: Any?) {
-        listeners.values.forEach { (id, listener) ->
-            if (id == bundleId) listener.onProperty(key, value)
+        val snapshot = synchronized(this) {
+            listeners.values.filter { it.first == bundleId }.map { it.second }
         }
+        snapshot.forEach { listener -> dispatcher.dispatch { listener.onProperty(key, value) } }
     }
 }
