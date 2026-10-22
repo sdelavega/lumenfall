@@ -31,18 +31,18 @@ val ndkPin = "27.3.13750724" // LTS line; must be installed via sdkmanager
 val rustJniLibs = layout.buildDirectory.dir("rustJniLibs")
 
 android {
-    namespace = "com.aetherdesk.lumenfall"
+    namespace = "com.sdelavega.lumenfall"
     compileSdk = 36
     ndkVersion = ndkPin
 
     defaultConfig {
-        applicationId = "com.aetherdesk.lumenfall"
+        applicationId = "com.sdelavega.lumenfall"
         // Android 13. Every device released in 2023 or later shipped with at
         // least this, so it covers the modern install base without excluding it.
         minSdk = 33
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 10000
+        versionName = "1.0.0"
         ndk { abiFilters += rustAbis }
     }
 

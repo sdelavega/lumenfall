@@ -22,7 +22,7 @@ pub enum LumenfallError {
 pub type Result<T> = std::result::Result<T, LumenfallError>;
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_aetherdesk_lumenfall_core_LumenfallCore_parseLivelyInfo(
+pub extern "system" fn Java_com_sdelavega_lumenfall_core_LumenfallCore_parseLivelyInfo(
     mut env: JNIEnv,
     _class: JClass,
     input: JString,
@@ -38,7 +38,7 @@ pub extern "system" fn Java_com_aetherdesk_lumenfall_core_LumenfallCore_parseLiv
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_aetherdesk_lumenfall_core_LumenfallCore_parseLivelyProperties(
+pub extern "system" fn Java_com_sdelavega_lumenfall_core_LumenfallCore_parseLivelyProperties(
     mut env: JNIEnv,
     _class: JClass,
     input: JString,
@@ -54,7 +54,7 @@ pub extern "system" fn Java_com_aetherdesk_lumenfall_core_LumenfallCore_parseLiv
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_aetherdesk_lumenfall_core_LumenfallCore_validateBundle(
+pub extern "system" fn Java_com_sdelavega_lumenfall_core_LumenfallCore_validateBundle(
     mut env: JNIEnv,
     _class: JClass,
     info_json: JString,
@@ -82,7 +82,7 @@ pub extern "system" fn Java_com_aetherdesk_lumenfall_core_LumenfallCore_validate
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_aetherdesk_lumenfall_core_LumenfallCore_screenBundle(
+pub extern "system" fn Java_com_sdelavega_lumenfall_core_LumenfallCore_screenBundle(
     mut env: JNIEnv,
     _class: JClass,
     script_source: JString,
@@ -206,5 +206,17 @@ impl From<WallpaperProperty> for PropertyResponse {
             default_value: value.default_value,
             raw: value.raw,
         }
+    }
+}
+
+#[cfg(test)]
+mod jni_names {
+    #[test]
+    fn exports_match_package() {
+        let source = include_str!("lib.rs");
+        // Built from pieces so this test does not match itself.
+        let stale = ["Java_com_", "aetherdesk"].concat();
+        assert!(!source.contains(&stale), "stale JNI package in lib.rs");
+        assert!(source.contains("Java_com_sdelavega_lumenfall_core_LumenfallCore_parseLivelyInfo"));
     }
 }
