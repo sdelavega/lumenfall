@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Stephen de la Vega
+// SPDX-License-Identifier: GPL-3.0-or-later
 use serde_json::{Map, Value};
 
 use crate::Result;

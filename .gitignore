@@ -11,3 +11,24 @@ build/
 target/
 captures/
 *.iml
+
+# Gortex (code intelligence)
+/.gortex/
+/.agents/
+/.gemini/
+/.kiro/
+/.opencode/
+/.github/skills/
+/.github/copilot-instructions.md
+/.mcp.json
+/.windsurfrules
+/.rules
+/CLAUDE.md
+/AGENTS.md
+/GEMINI.md
+/opencode.json
+
+# Release tooling
+/.superpowers/
+/dist/
+/.cargo-home/

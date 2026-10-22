@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Stephen de la Vega
+// SPDX-License-Identifier: GPL-3.0-or-later
 import java.util.Properties
 import org.gradle.api.tasks.Exec
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
