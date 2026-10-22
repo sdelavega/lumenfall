@@ -59,6 +59,10 @@ android {
         includeInBundle = false
     }
 
+    lint {
+        abortOnError = true
+    }
+
     signingConfigs {
         if (keystoreProps != null) {
             create("release") {

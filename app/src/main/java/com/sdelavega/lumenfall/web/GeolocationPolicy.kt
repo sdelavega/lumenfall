@@ -4,6 +4,7 @@ package com.sdelavega.lumenfall.web
 
 import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import com.sdelavega.lumenfall.storage.BundleStore
 
@@ -23,7 +24,8 @@ import com.sdelavega.lumenfall.storage.BundleStore
  *  2. **Per-bundle toggle** ([BundleStore.geolocationEnabled]) — defaults off,
  *     surfaced in `BundleSettingsActivity`. Even a clean bundle doesn't get
  *     location until the user explicitly opts this wallpaper in.
- *  3. **System permission** — `ACCESS_FINE_LOCATION` granted. Re-checked per
+ *  3. **System permission** — `ACCESS_FINE_LOCATION` or
+ *     `ACCESS_COARSE_LOCATION` granted (approximate fixes are valid). Re-checked per
  *     bridge call (see [GeolocationProvider]) so a mid-session revoke surfaces
  *     as a clean JS rejection rather than a crash; a live wallpaper runs in the
  *     background and can't host a permission dialog, so revocation is the one
@@ -38,8 +40,25 @@ object GeolocationPolicy {
         val screeningClean = screening != null && !screening.limited
         if (!screeningClean) return false
         if (!store.geolocationEnabled(bundleId)) return false
-        return ContextCompat.checkSelfPermission(
-            context, Manifest.permission.ACCESS_FINE_LOCATION
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        return hasLocationPermission(context)
     }
 }
+
+/**
+ * The one rule for "is location permitted": either precise (FINE) or
+ * approximate (COARSE) is enough, since Android 12+ lets the user downgrade a
+ * location grant to approximate-only.
+ */
+internal fun locationPermitted(fineGranted: Boolean, coarseGranted: Boolean): Boolean =
+    fineGranted || coarseGranted
+
+internal fun isFineLocationGranted(context: Context): Boolean =
+    ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+        PackageManager.PERMISSION_GRANTED
+
+internal fun hasLocationPermission(context: Context): Boolean = locationPermitted(
+    fineGranted = isFineLocationGranted(context),
+    coarseGranted = ContextCompat.checkSelfPermission(
+        context, Manifest.permission.ACCESS_COARSE_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED
+)

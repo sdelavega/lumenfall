@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.sdelavega.lumenfall.web
 
-import android.Manifest
 import android.content.Context
-import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
 import android.os.Build
@@ -54,9 +52,7 @@ class GeolocationProvider(private val context: Context) {
      * when available; [timeoutMs] bounds the wait. Resolves on the main thread.
      */
     fun current(enableHighAccuracy: Boolean, timeoutMs: Int, onResult: (Result) -> Unit) {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
+        if (!hasLocationPermission(context)) {
             main.post { onResult(Result.Denied("location permission not granted")) }
             return
         }
@@ -72,12 +68,16 @@ class GeolocationProvider(private val context: Context) {
         // through to NETWORK_PROVIDER (WiFi/cell-based fix) rather than handing
         // getCurrentLocation a provider string it will reject with
         // "provider X does not exist".
+        // GPS_PROVIDER requires ACCESS_FINE_LOCATION; with approximate-only
+        // permission it is skipped and NETWORK_PROVIDER is used.
+        val gpsAllowed = isFineLocationGranted(context)
         val provider = when {
-            enableHighAccuracy && manager.isProviderEnabled(LocationManager.GPS_PROVIDER) ->
+            gpsAllowed && enableHighAccuracy &&
+                manager.isProviderEnabled(LocationManager.GPS_PROVIDER) ->
                 LocationManager.GPS_PROVIDER
             manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) ->
                 LocationManager.NETWORK_PROVIDER
-            manager.isProviderEnabled(LocationManager.GPS_PROVIDER) ->
+            gpsAllowed && manager.isProviderEnabled(LocationManager.GPS_PROVIDER) ->
                 LocationManager.GPS_PROVIDER
             else -> {
                 main.post { onResult(Result.Unavailable("location providers are off")) }

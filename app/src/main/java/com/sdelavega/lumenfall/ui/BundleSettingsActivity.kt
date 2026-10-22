@@ -6,7 +6,6 @@ import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
 import android.Manifest
-import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -32,7 +31,6 @@ import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
-import androidx.core.content.ContextCompat
 import com.sdelavega.lumenfall.R
 import com.sdelavega.lumenfall.render.GeolocationBus
 import com.sdelavega.lumenfall.render.PropertyBus
@@ -43,6 +41,8 @@ import com.sdelavega.lumenfall.storage.BundledWallpapers
 import com.sdelavega.lumenfall.web.BundleWebView
 import com.sdelavega.lumenfall.web.ContactedDomains
 import com.sdelavega.lumenfall.web.GeolocationPolicy
+import com.sdelavega.lumenfall.web.hasLocationPermission
+import com.sdelavega.lumenfall.web.locationPermitted
 import com.sdelavega.lumenfall.web.PerformanceGovernor
 import com.sdelavega.lumenfall.web.PerformancePolicy
 import com.sdelavega.lumenfall.web.WebViewTimers
@@ -115,7 +115,12 @@ class BundleSettingsActivity : AppCompatActivity() {
     // prompt never fires for a screened-out bundle.
     private var geoToggle: SwitchCompat? = null
     private val requestLocationPermission =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+            // Approximate-only is a valid grant.
+            val granted = locationPermitted(
+                fineGranted = results[Manifest.permission.ACCESS_FINE_LOCATION] == true,
+                coarseGranted = results[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+            )
             val toggle = geoToggle ?: return@registerForActivityResult
             if (granted) {
                 store.setGeolocationEnabled(bundleId, true)
@@ -275,7 +280,7 @@ class BundleSettingsActivity : AppCompatActivity() {
      * screener classified clean (not "limited") — a screened-out bundle never
      * sees the geolocation surface at all, so the toggle is meaningless there
      * and would only confuse. Default off; turning it on prompts for
-     * ACCESS_FINE_LOCATION (the wallpaper service itself can't prompt).
+     * ACCESS_FINE_LOCATION and ACCESS_COARSE_LOCATION (either grant suffices; the wallpaper service itself can't prompt).
      *
      * The native bridge stays registered and enforces the toggle at call time,
      * so changes apply to the live preview and the running wallpaper
@@ -297,9 +302,7 @@ class BundleSettingsActivity : AppCompatActivity() {
         val enabled = store.geolocationEnabled(bundleId)
         val toggle = GlassUi.switchControl(this, enabled, "Allow geolocation") { on ->
             if (on) {
-                val granted = ContextCompat.checkSelfPermission(
-                    this, Manifest.permission.ACCESS_FINE_LOCATION
-                ) == PackageManager.PERMISSION_GRANTED
+                val granted = hasLocationPermission(this)
                 if (granted) {
                     store.setGeolocationEnabled(bundleId, true)
                     applyGeolocationNow()
@@ -309,7 +312,12 @@ class BundleSettingsActivity : AppCompatActivity() {
                     // on the actual grant result, and reverts the toggle if
                     // denied. Set the toggle visually on so the user sees their
                     // tap registered; the callback flips it back on denial.
-                    requestLocationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                    requestLocationPermission.launch(
+                        arrayOf(
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION
+                        )
+                    )
                 }
             } else {
                 store.setGeolocationEnabled(bundleId, false)

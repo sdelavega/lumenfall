@@ -4,12 +4,13 @@
         android:required="true" />
 
     <!-- Geolocation for web wallpaper bundles that opt in (per-bundle toggle in
-         settings). Only fine location is requested, per the grant model chosen:
-         coarse wasn't precise enough for the map/sun-position style wallpapers
-         that want this. The bridge is only registered for bundles the import
+         settings). Fine and coarse are both declared (Android 12+ lets the user
+         downgrade to approximate); either grant is accepted, and GPS is only
+         used when fine is granted. The bridge is only registered for bundles the import
          screener classified "allowed" (not "limited"), so a bundle that trips
          the screener's network/heavy-GPU heuristics never even sees the surface. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <!-- The native fetch proxy (NativeFetchBridge) makes HTTP requests on
          behalf of web wallpaper bundles, bypassing the WebView's CORS
