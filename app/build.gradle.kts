@@ -52,6 +52,13 @@ android {
     // jniLibs source so the normal merge/packaging picks it up.
     sourceSets["main"].jniLibs.srcDir(rustJniLibs)
 
+    // The encrypted dependency-metadata blob is only useful to Google Play and
+    // is a needless extra thing for a reproducible build to carry.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+
     signingConfigs {
         if (keystoreProps != null) {
             create("release") {
@@ -77,6 +84,13 @@ android {
                 signingConfigs.getByName("debug")
             }
         }
+        // Unsigned twin of release, used by scripts/repro-check.sh: signing is
+        // the only intended difference, so two builds can be compared bytewise.
+        create("repro") {
+            initWith(getByName("release"))
+            signingConfig = null
+            matchingFallbacks += "release"
+        }
     }
 
     compileOptions {
@@ -98,12 +112,24 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
 
     val ndkDir = android.sdkDirectory.resolve("ndk/$ndkPin")
     val outDir = rustJniLibs.get().asFile
-    // cargo resolves to the rustup shim (which owns the android target), not the
-    // Homebrew `rust` formula; prepend ~/.cargo/bin so that wins.
-    val cargoBin = file(System.getProperty("user.home")).resolve(".cargo/bin")
+    // cargo comes from $CARGO or PATH; rust-toolchain.toml pins the compiler.
+    val cargoCmd = System.getenv("CARGO") ?: "cargo"
+    val home = System.getProperty("user.home")
+    val cargoHome = System.getenv("CARGO_HOME") ?: "$home/.cargo"
+    val rustupHome = System.getenv("RUSTUP_HOME") ?: "$home/.rustup"
+    // Remap every machine-specific prefix so the .so carries no host paths and
+    // two checkouts in different directories build identical bytes.
+    val remapFlags = listOf(
+        "${rootProject.projectDir.absolutePath}=/lumenfall",
+        "$cargoHome=/cargo",
+        "$rustupHome=/rustup",
+    ).joinToString(" ") { "--remap-path-prefix=$it" }
 
     inputs.dir(rootProject.projectDir.resolve("core-rust/src"))
     inputs.file(rootProject.projectDir.resolve("core-rust/Cargo.toml"))
+    inputs.file(rootProject.projectDir.resolve("Cargo.toml"))
+    inputs.file(rootProject.projectDir.resolve("Cargo.lock"))
+    inputs.property("remapFlags", remapFlags)
     outputs.dir(outDir)
 
     doFirst {
@@ -113,12 +139,12 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
         outDir.mkdirs()
     }
     environment("ANDROID_NDK_HOME", ndkDir.absolutePath)
-    environment("PATH", cargoBin.absolutePath + File.pathSeparator + System.getenv("PATH"))
+    environment("RUSTFLAGS", remapFlags)
 
-    val cmd = mutableListOf("cargo", "ndk")
+    val cmd = mutableListOf(cargoCmd, "ndk")
     rustAbis.forEach { cmd += listOf("-t", it) }
     cmd += listOf("--platform", rustMinApi.toString(), "-o", outDir.absolutePath,
-        "build", "--release", "-p", "lumenfall-core")
+        "build", "--release", "--locked", "-p", "lumenfall-core")
     commandLine(cmd)
 }
 
