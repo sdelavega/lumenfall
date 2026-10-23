@@ -156,7 +156,7 @@ class LumenfallWallpaperService : WallpaperService() {
                 }
             } else {
                 Log.d(TAG, "no renderable bundle; loading placeholder")
-                PLACEHOLDER_URL
+                placeholderUrl(PLACEHOLDER_URL, java.time.LocalDate.now(), DebugHooks.forceUniversityDay)
             }
             val props = webBundle?.let { store.effectiveValues(it.id).toString() } ?: "{}"
             // Practical limits from import screening. Bundles without a report

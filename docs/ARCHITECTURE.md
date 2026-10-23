@@ -443,6 +443,13 @@ Release build (DONE, 2026-07-03):
   signatures), which wipes imported bundles. Cloud backup excludes imported
   bundles and thumbnail caches (`data_extraction_rules.xml`).
 
+Easter eggs: tapping the About version line 7 times (`TapCounter`) plays a
+brief Carolina Blue glow overlay and a note (nothing persisted). Typing `carolina` into any wallpaper Color field resolves to
+`#4B9CD3` (`ColorTokens`; bundles only see hex). On 12 October (device local
+date) the no-bundle placeholder gets a `#carolina` URL fragment and restyles via
+CSS `:target`, with no script (`isUniversityDay`; debug builds can force it via
+`SMOKE_FORCE_UNIVERSITY_DAY`).
+
 Open questions:
 
 - Can a WebView be hosted safely and efficiently for a live wallpaper, or do we

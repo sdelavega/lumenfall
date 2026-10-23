@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import com.sdelavega.lumenfall.render.ActiveBundleBus
+import com.sdelavega.lumenfall.service.DebugHooks
 import com.sdelavega.lumenfall.storage.BundleStore
 
 /**
@@ -17,6 +18,12 @@ import com.sdelavega.lumenfall.storage.BundleStore
  */
 class SmokeReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == ACTION_FORCE_UNIVERSITY_DAY) {
+            DebugHooks.forceUniversityDay = intent.getBooleanExtra("on", false)
+            ActiveBundleBus.notifyChanged()
+            Log.i(TAG, "SMOKE_FORCE_UNIVERSITY_DAY -> ${DebugHooks.forceUniversityDay}")
+            return
+        }
         if (intent.action != ACTION) return
         val id = intent.getStringExtra("id")
         val store = BundleStore(context)
@@ -31,6 +38,7 @@ class SmokeReceiver : BroadcastReceiver() {
 
     private companion object {
         const val ACTION = "com.sdelavega.lumenfall.SMOKE_SET_ACTIVE"
+        const val ACTION_FORCE_UNIVERSITY_DAY = "com.sdelavega.lumenfall.SMOKE_FORCE_UNIVERSITY_DAY"
         const val TAG = "LumenfallSmoke"
     }
 }

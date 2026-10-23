@@ -397,10 +397,17 @@ class MainActivity : AppCompatActivity() {
     private fun buildAboutContent(): View {
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val version = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull()
+        val taps = TapCounter(threshold = 7, windowMs = 2000, now = { android.os.SystemClock.uptimeMillis() })
         column.addView(TextView(this).apply {
             text = if (version != null) "Lumenfall $version" else "Lumenfall"
             setTextColor(getColor(R.color.glass_text_primary))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setOnClickListener {
+                if (taps.tap()) {
+                    CarolinaGlow.play(this@MainActivity)
+                    GlassUi.toast(this@MainActivity, CarolinaGlow.NOTE)
+                }
+            }
         })
         column.addView(TextView(this).apply {
             text = "A Lively-compatible live wallpaper host for Android tablets, with an " +

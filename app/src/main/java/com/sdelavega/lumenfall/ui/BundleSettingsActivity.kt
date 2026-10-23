@@ -786,7 +786,10 @@ class BundleSettingsActivity : AppCompatActivity() {
             edit.setTextSilently(watcher, hex)
             apply(p.key, hex)
         }
-        watcher = edit.afterTextChanged { text ->
+        watcher = edit.afterTextChanged { raw ->
+            val token = ColorTokens.resolve(raw)
+            if (token != null) edit.setTextSilently(watcher, token)
+            val text = token ?: raw
             runCatching {
                 val c = Color.parseColor(text)
                 swatch.setBackgroundColor(c)

@@ -23,10 +23,17 @@
   }
   .hint { font-size: clamp(18px, 4.5vmin, 36px); font-weight: 300; margin: 0 0 1.2vmin; }
   .name { font-size: clamp(12px, 2.4vmin, 20px); letter-spacing: 0.3em; text-transform: uppercase; color: #7C869C; margin: 0; }
+  /* University Day (12 Oct): the service appends #carolina; no script needed. */
+  #carolina { display: contents; }
+  :root:has(#carolina:target) body, body:has(#carolina:target) { background: #0E2233; }
+  #carolina:target .hint { color: #D6EAF7; }
+  #carolina:target .name { color: #4B9CD3; }
 </style>
 </head>
 <body>
-  <p class="hint">Pick a wallpaper to begin</p>
-  <p class="name">Lumenfall</p>
+  <div id="carolina">
+    <p class="hint">Pick a wallpaper to begin</p>
+    <p class="name">Lumenfall</p>
+  </div>
 </body>
 </html>
