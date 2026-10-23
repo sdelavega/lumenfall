@@ -59,5 +59,8 @@ jobs:
         if: steps.cargo-ndk-cache.outputs.cache-hit != 'true'
         run: cargo install cargo-ndk --locked --version 4.1.2
 
+      # The gate's repro-check prints "repro-check: identical (<sha256>)" and
+      # copies the hash to the run summary. Compare it with `just repro-check` on
+      # the maintainer's Mac before tagging (same-host builds are all the gate proves).
       - name: Gate
         run: just gate

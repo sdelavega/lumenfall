@@ -54,6 +54,19 @@ pause() { # pause <message>
     if [ "$DRY_RUN" -eq 1 ]; then echo "   (dry-run: not waiting)"; else read -r -p "   Press Enter when done... " _; fi
 }
 
+fail=0
+confirm() { # confirm <question> <label>: a manual yes/no check that counts toward the result
+    echo
+    echo ">> $1"
+    if [ "$DRY_RUN" -eq 1 ]; then echo "   (dry-run: not asking)"; echo "SKIP  $2"; return; fi
+    local answer
+    read -r -p "   [y/N] " answer
+    case "$answer" in
+        y|Y|yes|YES) echo "PASS  $2" ;;
+        *) echo "FAIL  $2"; fail=1 ;;
+    esac
+}
+
 snooze() { # snooze <seconds>
     if [ "$DRY_RUN" -eq 1 ]; then echo "+ sleep $1"; else sleep "$1"; fi
 }
@@ -80,10 +93,26 @@ fi
 # 2. Choose the live wallpaper.
 adb shell am start -a android.service.wallpaper.CHANGE_LIVE_WALLPAPER \
     --ecn android.service.wallpaper.extra.LIVE_WALLPAPER_COMPONENT "$SERVICE"
-pause "Tap 'Set wallpaper' on the device"
+pause "Confirm Lumenfall in Android's wallpaper preview (tap its Set wallpaper button there)"
 
-# 3. Clean log.
+# 3. Clean log, then stream crash + main buffers to a file for the whole run: a
+# single `logcat -d` after a long soak can lose early lines to the ring buffer.
 adb logcat -c
+LOGCAT_PID=""
+stop_logcat() {
+    if [ -n "$LOGCAT_PID" ]; then
+        kill "$LOGCAT_PID" 2>/dev/null || true
+        wait "$LOGCAT_PID" 2>/dev/null || true
+        LOGCAT_PID=""
+    fi
+}
+trap stop_logcat EXIT
+if [ "$DRY_RUN" -eq 1 ]; then
+    echo "+ adb logcat -b crash,main -v threadtime > $OUT/logcat.txt &"
+else
+    "$ADB" logcat -b crash,main -v threadtime > "$OUT/logcat.txt" &
+    LOGCAT_PID=$!
+fi
 
 # 4. Each bundled wallpaper: select, wait, screenshot.
 for dir in app/src/main/assets/wallpapers/*/; do
@@ -102,7 +131,10 @@ done
 
 # 5. Manual checks.
 pause "Import a test Lively zip, then change one of its properties live"
-pause "Open Settings for the active imported bundle, then delete that bundle while Settings is open"
+pause "Tap the imported bundle in Lumenfall and confirm it in Android's preview so it is the ACTIVE wallpaper, then open its Settings and (split-screen or floating window if you can) delete it from the library"
+# The engine must fall back to the placeholder when the active bundle is deleted.
+confirm "Press Home. Does the home screen now show the 'Pick a wallpaper to begin' placeholder (not the deleted bundle)?" \
+    "delete-active falls back to the placeholder"
 pause "Rotate the device (portrait to landscape and back)"
 
 # 6. Soak: alternate hiding and showing the wallpaper every 60 s.
@@ -120,19 +152,14 @@ while [ "$i" -lt "$cycles" ]; do
 done
 adb shell input keyevent KEYCODE_HOME
 
-# 7. Logcat scan.
-fail=0
+# 7. Logcat scan (the streamed file; stop the stream first so it is complete).
+stop_logcat
 check() { # check <label> <pattern>
     local n
     if [ "$DRY_RUN" -eq 1 ]; then echo "+ grep -c '$2' $OUT/logcat.txt"; echo "SKIP  $1"; return; fi
     n=$(grep -c -e "$2" "$OUT/logcat.txt" || true)
     if [ "$n" -eq 0 ]; then echo "PASS  $1"; else echo "FAIL  $1 ($n match(es))"; fail=1; fi
 }
-if [ "$DRY_RUN" -eq 1 ]; then
-    echo "+ adb logcat -d > $OUT/logcat.txt"
-else
-    "$ADB" logcat -d > "$OUT/logcat.txt"
-fi
 echo "== logcat scan"
 check "no FATAL EXCEPTION" "FATAL EXCEPTION"
 check "no ANR in $PKG" "ANR in $PKG"

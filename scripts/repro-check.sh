@@ -34,7 +34,13 @@ if [ ! -f "${apk_a[0]}" ] || [ ! -f "${apk_b[0]}" ]; then
 fi
 
 if cmp "${apk_a[0]}" "${apk_b[0]}"; then
-    echo "repro-check: identical ($(shasum -a 256 "${apk_a[0]}" | cut -d' ' -f1))"
+    sha=$(shasum -a 256 "${apk_a[0]}" | cut -d' ' -f1)
+    echo "repro-check: identical ($sha)"
+    # In CI, surface the hash on the run page so it can be compared with a local
+    # (macOS) build's before tagging: cross-host reproducibility is not otherwise checked.
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+        echo "repro APK sha256: \`$sha\`" >> "$GITHUB_STEP_SUMMARY"
+    fi
     exit 0
 fi
 

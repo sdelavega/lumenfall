@@ -101,6 +101,10 @@ makes `cargoNdkBuild` skip itself, and fail with a clear message if
 `app/build/rustJniLibs/arm64-v8a/liblumenfall_core.so` is missing. Normal builds
 do not set it.
 
+Before tagging, compare the repro APK hash CI printed (the `repro-check: identical`
+line of the gate step, also on the run summary) with the one `just repro-check`
+prints locally; the gate only proves two builds on the *same* host agree.
+
 Later releases: F-Droid's `UpdateCheckMode: Tags` notices the new `vX.Y.Z` tag,
 and `AutoUpdateMode: Version` adds the build entry automatically. F-Droid builds
 from source and, because the build is reproducible, verifies it against the
