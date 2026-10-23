@@ -44,8 +44,8 @@ class PropertySchemaTest {
             prop("d", "dropdown", "1", """{"items":["x","y","z"]}"""),
             prop("e", "dropdown", "-1", """{"items":["x","y"]}""")
         )
-        assertEquals(PropertySchema.Dropdown("d", "Label d", listOf("x", "y", "z"), 1), s[0])
-        assertEquals(PropertySchema.Dropdown("e", "Label e", listOf("x", "y"), 0), s[1])
+        assertEquals(PropertySchema.Dropdown("d", "Label d", listOf("x", "y", "z"), 1, false), s[0])
+        assertEquals(PropertySchema.Dropdown("e", "Label e", listOf("x", "y"), 0, false), s[1])
     }
 
     @Test fun folderDropdownExtensionsFromFilter() {
@@ -106,8 +106,17 @@ class PropertySchemaTest {
             prop("d", "dropdown", "\"High\"", """{"items":["Low","High"]}"""),
             prop("e", "dropdown", "\"Nope\"", """{"items":["Low","High"]}""")
         )
-        assertEquals(PropertySchema.Dropdown("d", "Label d", listOf("Low", "High"), 1), s[0])
-        assertEquals(PropertySchema.Dropdown("e", "Label e", listOf("Low", "High"), 0), s[1])
+        assertEquals(PropertySchema.Dropdown("d", "Label d", listOf("Low", "High"), 1, true), s[0])
+        assertEquals(PropertySchema.Dropdown("e", "Label e", listOf("Low", "High"), 0, true), s[1])
+    }
+
+    @Test fun dropdownRemembersStringDefault() {
+        val s = parse(
+            prop("d", "dropdown", "\"High\"", """{"items":["Low","High"]}"""),
+            prop("e", "dropdown", "1", """{"items":["Low","High"]}""")
+        )
+        assertEquals(true, (s[0] as PropertySchema.Dropdown).valueIsName)
+        assertEquals(false, (s[1] as PropertySchema.Dropdown).valueIsName)
     }
 
     @Test fun dropdownOutOfRangeMatchesLegacyBehaviour() {

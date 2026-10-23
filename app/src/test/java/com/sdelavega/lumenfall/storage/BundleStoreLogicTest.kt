@@ -18,4 +18,18 @@ class BundleStoreLogicTest {
     @Test fun validOverridesParse() {
         assertEquals(3, parseOverrides("{\"a\":3}").getInt("a"))
     }
+
+    @Test fun stringDefaultDropdownBridgesName() {
+        val d = PropertySchema.Dropdown("d", "D", listOf("Low", "High"), 1, true)
+        assertEquals("High", bridgedDropdownDefault(d))
+    }
+
+    @Test fun numericDefaultDropdownBridgesIndex() {
+        val d = PropertySchema.Dropdown("d", "D", listOf("Low", "High"), 1, false)
+        assertEquals(1, bridgedDropdownDefault(d))
+    }
+
+    @Test fun nameDropdownWithNoItemsBridgesEmpty() {
+        assertEquals("", bridgedDropdownDefault(PropertySchema.Dropdown("d", "D", emptyList(), 0, true)))
+    }
 }

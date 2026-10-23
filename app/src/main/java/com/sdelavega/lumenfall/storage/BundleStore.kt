@@ -55,6 +55,10 @@ data class BundleMeta(
 internal fun parseOverrides(text: String?): JSONObject =
     if (text == null) JSONObject() else runCatching { JSONObject(text) }.getOrDefault(JSONObject())
 
+/** Dropdown default as the bundle expects it: item name for string-valued bundles, else the index. */
+internal fun bridgedDropdownDefault(d: PropertySchema.Dropdown): Any =
+    if (d.valueIsName) d.items.getOrElse(d.defaultIndex) { "" } else d.defaultIndex
+
 private fun JSONObject.stringOrNull(key: String): String? =
     if (!has(key) || isNull(key)) null else optString(key)
 
@@ -148,7 +152,7 @@ class BundleStore(context: Context) {
         PropertyParseResult.Failed(e.message ?: e.javaClass.simpleName)
     }
 
-    @Deprecated("Task 11 removes this; use propertySchema")
+    @Deprecated("Task 11 removes this; use propertySchema", ReplaceWith("propertySchema(id)"))
     fun properties(id: String): List<BundleProperty> =
         if (BundledWallpapers.isBundled(id)) {
             // Bundled wallpapers: parse from assets via Rust, cached per call.
@@ -201,7 +205,7 @@ class BundleStore(context: Context) {
         is PropertySchema.Slider -> p.default
         is PropertySchema.Color -> p.default
         is PropertySchema.Checkbox -> p.default
-        is PropertySchema.Dropdown -> p.defaultIndex
+        is PropertySchema.Dropdown -> bridgedDropdownDefault(p)
         is PropertySchema.FolderDropdown -> p.default.takeIf { it.isNotEmpty() }
         is PropertySchema.Text -> p.default
         is PropertySchema.Button, is PropertySchema.Label -> null

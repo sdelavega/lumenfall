@@ -19,7 +19,9 @@ sealed interface PropertySchema {
     data class Checkbox(override val key: String, override val label: String, val default: Boolean) : PropertySchema
     data class Dropdown(
         override val key: String, override val label: String,
-        val items: List<String>, val defaultIndex: Int
+        val items: List<String>, val defaultIndex: Int,
+        /** True when the envelope's default_value was a JSON string, so the bridge value is the item name. */
+        val valueIsName: Boolean
     ) : PropertySchema
 
     data class FolderDropdown(
@@ -81,12 +83,13 @@ object PropertySchemaParser {
                     // Mirrors the legacy settings consumer: a number is the index, a string is
                     // looked up in items, and the result is clamped to [0, lastIndex] (a
                     // string not found, a negative index, or an empty list all yield 0).
+                    val valueIsName = def is String
                     val rawIndex = when (def) {
                         is Number -> def.toInt()
                         is String -> items.indexOf(def)
                         else -> 0
                     }
-                    PropertySchema.Dropdown(key, label, items, rawIndex.coerceIn(0, maxOf(0, items.size - 1)))
+                    PropertySchema.Dropdown(key, label, items, rawIndex.coerceIn(0, maxOf(0, items.size - 1)), valueIsName)
                 }
             }
             "folderdropdown" -> PropertySchema.FolderDropdown(
