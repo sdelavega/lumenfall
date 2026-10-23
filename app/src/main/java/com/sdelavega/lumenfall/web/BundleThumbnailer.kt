@@ -287,6 +287,16 @@ object BundleThumbnailer {
         private val captureRunnable = Runnable { snapshot() }
 
         fun start() {
+            try {
+                startCapture()
+            } catch (t: Throwable) {
+                // Release whatever was half-built, then report failure through onDone.
+                Log.w(TAG, "web capture setup failed for ${meta.id}", t)
+                finish(null)
+            }
+        }
+
+        private fun startCapture() {
             val displayManager =
                 context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
             val r = ImageReader.newInstance(
