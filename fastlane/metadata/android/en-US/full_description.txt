@@ -1,4 +1,4 @@
-Lumenfall is a live wallpaper host for Android. It runs wallpaper bundles made for Lively and AetherDesk, with their settings panels, on Android's own wallpaper service. Eight wallpapers are included, and you can import more from a folder or a zip.
+Lumenfall is a live wallpaper host for Android. It runs wallpaper bundles made for Lively and AetherDesk, with their settings panels, on Android's own wallpaper service. Eight wallpapers are included, and you can import more from a .zip.
 
 <b>Features</b>
 <ul>

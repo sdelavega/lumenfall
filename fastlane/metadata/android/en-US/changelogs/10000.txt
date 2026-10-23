@@ -1,6 +1,6 @@
 First public release.
 - Runs Lively and AetherDesk wallpaper bundles as an Android live wallpaper.
 - Eight wallpapers included, among them the new Rainfall.
-- Import your own bundles from a folder or a zip.
+- Import your own bundles from a .zip.
 - No analytics, no accounts. Known trackers and IP-location services are blocked.
 - Reproducible builds, GPL-3.0-or-later.

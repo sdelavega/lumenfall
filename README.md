@@ -5,7 +5,7 @@ bundles. A thin Kotlin shell runs on Android's native `WallpaperService`; a Rust
 core parses, validates and screens the bundles. It is free software, with no
 analytics and no accounts.
 
-Eight wallpapers are included. You can import more from a folder or a zip, and
+Eight wallpapers are included. You can import more from a .zip, and
 each one has its own settings screen with a live preview.
 
 Screenshots are coming; they will live under
@@ -38,7 +38,7 @@ can ship the same APK, with the developer's signature, as GitHub. If that ever
 stops being possible, F-Droid and GitHub installs will use different keys and
 will not update each other.
 
-Then open Lumenfall and choose **Set wallpaper**.
+Then open Lumenfall, tap a wallpaper, and confirm in Android's preview.
 
 ## Wallpaper bundles
 
