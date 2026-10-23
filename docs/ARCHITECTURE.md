@@ -411,7 +411,7 @@ Native build (DONE, 2026-06-29):
 - Reproducible release: the Cargo release profile uses `lto`, one codegen unit,
   `strip` and `panic = "abort"`, builds use `--locked`, and `RUSTFLAGS` remaps the
   workspace, Cargo home and rustup home so no build-machine path reaches the `.so`
-  (`just no-home-paths` scans tracked files, the `.so` and the APK). The APK
+  (`just no-home-paths` scans tracked files; `just assemble-release` scans the freshly built `.so` and the APK). The APK
   omits dependency metadata. `just repro-check` builds twice from separate copies
   of the tree and compares the unsigned APKs bytewise.
 

@@ -29,10 +29,11 @@ kotlin-test:
     ./gradlew :app:testDebugUnitTest --console=plain
 
 # Release APK (signed with the release key if keystore.properties exists, else the debug key),
-# then reject developer home paths anywhere inside it (native library and dex included).
+# then reject developer home paths in the freshly built native library and anywhere inside
+# the APK (native library and dex included). The build must have produced the library.
 assemble-release:
     ./gradlew :app:assembleRelease --console=plain
-    scripts/no-home-paths.sh app/build/outputs/apk/release/*.apk
+    scripts/no-home-paths.sh app/build/rustJniLibs/arm64-v8a/liblumenfall_core.so app/build/outputs/apk/release/*.apk
 
 # The debug-only SmokeReceiver must not be in the release merged manifest (run after assemble-release).
 smoke-manifest-check:
@@ -42,10 +43,10 @@ smoke-manifest-check:
 smoke *flags:
     scripts/smoke.sh {{flags}}
 
-# Reject developer home paths in tracked files and in the native library, when one has been
-# built (a fresh checkout has none; assemble-release scans the finished APK either way).
+# Reject developer home paths in tracked files. Build output is scanned by assemble-release,
+# so stale artifacts from an earlier build cannot fail this check.
 no-home-paths:
-    scripts/no-home-paths.sh $(ls app/build/rustJniLibs/arm64-v8a/liblumenfall_core.so 2>/dev/null || true)
+    scripts/no-home-paths.sh
 
 # Every owned source file carries the copyright and SPDX header.
 header:
