@@ -17,6 +17,11 @@ object BundleFiles {
         ZipInputStream(input.buffered()).use { zis ->
             var entry = zis.nextEntry
             while (entry != null) {
+                // File(root, "/abs") silently resolves under root, so reject absolute
+                // names explicitly rather than extracting them somewhere unintended.
+                if (entry.name.startsWith("/") || entry.name.startsWith("\\")) {
+                    throw SecurityException("Zip entry has absolute path: ${entry.name}")
+                }
                 val out = File(root, entry.name).canonicalFile
                 // Zip-slip guard: the resolved path must stay under root.
                 if (out.path != root.path && !out.path.startsWith(prefix)) {
@@ -34,7 +39,12 @@ object BundleFiles {
         }
     }
 
-    /** Shallowest `LivelyInfo.json` (bundles sometimes nest under one folder). */
+    /**
+     * Shallowest `LivelyInfo.json` (bundles sometimes nest under one folder).
+     * Ties at the same depth are broken by walk order, which is filesystem
+     * dependent; a bundle with several equally shallow copies is ambiguous and
+     * not a supported layout.
+     */
     fun findLivelyInfo(dir: File): File? =
         dir.walkTopDown()
             .filter { it.isFile && it.name.equals("LivelyInfo.json", ignoreCase = true) }

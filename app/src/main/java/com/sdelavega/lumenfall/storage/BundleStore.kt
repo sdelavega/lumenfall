@@ -5,6 +5,7 @@ package com.sdelavega.lumenfall.storage
 import android.content.Context
 import org.json.JSONObject
 import com.sdelavega.lumenfall.core.LumenfallCore
+import com.sdelavega.lumenfall.importer.ImportSink
 import com.sdelavega.lumenfall.render.BundleDeletedBus
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -67,7 +68,7 @@ private fun JSONObject.stringOrNull(key: String): String? =
  * the picker UI and the wallpaper service (same process), so SharedPreferences
  * is a sufficient store for the active id.
  */
-class BundleStore(context: Context) {
+class BundleStore(context: Context) : ImportSink {
     private val app = context.applicationContext
     val bundlesDir: File = File(app.filesDir, "bundles").apply { mkdirs() }
     private val prefs = app.getSharedPreferences("lumenfall", Context.MODE_PRIVATE)
@@ -93,7 +94,7 @@ class BundleStore(context: Context) {
         if (BundledWallpapers.isBundled(id)) BundledWallpapers.get(app, id)
         else runCatching { BundleMeta.fromJson(metaFile(id).readText()) }.getOrNull()
 
-    fun saveMeta(meta: BundleMeta) = metaFile(meta.id).writeText(meta.toJson())
+    override fun saveMeta(meta: BundleMeta) = metaFile(meta.id).writeText(meta.toJson())
 
     fun delete(id: String) {
         if (BundledWallpapers.isBundled(id)) return // can't delete a bundled wallpaper
@@ -131,7 +132,7 @@ class BundleStore(context: Context) {
     private fun overridesFile(id: String) = File(bundleDir(id), OVERRIDES_NAME)
 
     /** Persist the Rust `parseLivelyProperties` envelope for later reads. */
-    fun savePropertiesEnvelope(id: String, envelope: String) {
+    override fun savePropertiesEnvelope(id: String, envelope: String) {
         propsFile(id).writeText(envelope)
         schemaCache.remove(id)
     }
@@ -213,7 +214,7 @@ class BundleStore(context: Context) {
     private fun screeningFile(id: String) = File(bundleDir(id), SCREENING_NAME)
 
     /** Persist the Rust `screenBundle` envelope for later reads. */
-    fun saveScreeningEnvelope(id: String, envelope: String) =
+    override fun saveScreeningEnvelope(id: String, envelope: String) =
         screeningFile(id).writeText(envelope)
 
     /**

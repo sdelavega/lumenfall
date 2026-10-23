@@ -3,9 +3,12 @@
 package com.sdelavega.lumenfall.importer
 
 import android.content.Context
+import android.util.Log
+import com.sdelavega.lumenfall.core.CoreApi
 import com.sdelavega.lumenfall.core.LumenfallCore
 import com.sdelavega.lumenfall.storage.BundleMeta
 import com.sdelavega.lumenfall.storage.BundleStore
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.InputStream
@@ -17,8 +20,15 @@ import java.io.InputStream
  * Bundles are untrusted, so extraction is zip-slip guarded and the whole import
  * is transactional — any failure deletes the partial bundle dir.
  */
-class BundleImporter(context: Context) {
-    private val store = BundleStore(context)
+class BundleImporter(
+    private val bundlesRoot: File,
+    private val core: CoreApi = LumenfallCore,
+    private val sink: ImportSink,
+    private val logger: (String) -> Unit = { Log.w(TAG, it) }
+) {
+    constructor(context: Context) : this(BundleStore(context))
+
+    private constructor(store: BundleStore) : this(store.bundlesDir, LumenfallCore, store)
 
     sealed interface Result {
         data class Ok(val meta: BundleMeta) : Result
@@ -27,7 +37,7 @@ class BundleImporter(context: Context) {
 
     fun importZip(input: InputStream, fallbackName: String): Result {
         val id = "b" + System.currentTimeMillis()
-        val dir = store.bundleDir(id)
+        val dir = File(bundlesRoot, id)
         return try {
             dir.mkdirs()
             BundleFiles.extractZip(input, dir)
@@ -50,14 +60,20 @@ class BundleImporter(context: Context) {
             // and rate-limits network for this bundle.
             var screeningEnvelope: String? = null
             if (validation.kind == "web") {
-                val envelope = LumenfallCore.screenBundle(collectScriptSource(dir))
-                val report = JSONObject(envelope)
+                val collected = collectScriptSource(dir, logger)
+                val raw = core.screenBundle(collected.source)
+                val report = JSONObject(raw)
                 if (report.optString("classification") == "rejected") {
                     val issues = report.optJSONArray("issues")
                         ?.let { arr -> (0 until arr.length()).joinToString("; ") { arr.getString(it) } }
                     return fail(dir, "Blocked at import: ${issues ?: "failed content screening"}")
                 }
-                screeningEnvelope = envelope
+                screeningEnvelope =
+                    if (collected.skipped.isNotEmpty() && report.optString("classification") == "allowed") {
+                        downgradeToLimited(report, collected.skipped.size).toString()
+                    } else {
+                        raw
+                    }
             }
 
             val meta = BundleMeta(
@@ -69,8 +85,8 @@ class BundleImporter(context: Context) {
                 previewPath = validation.previewPath,
                 importedAt = System.currentTimeMillis()
             )
-            store.saveMeta(meta)
-            screeningEnvelope?.let { store.saveScreeningEnvelope(id, it) }
+            sink.saveMeta(meta)
+            screeningEnvelope?.let { sink.saveScreeningEnvelope(id, it) }
 
             // Optional: configurable properties (LivelyProperties.json, next to
             // LivelyInfo.json). Parsed by the Rust core; absent is fine.
@@ -79,8 +95,8 @@ class BundleImporter(context: Context) {
                 ?.firstOrNull { it.name.equals("LivelyProperties.json", ignoreCase = true) }
             if (propsSource != null) {
                 runCatching {
-                    store.savePropertiesEnvelope(id, LumenfallCore.parseLivelyProperties(propsSource.readText()))
-                }
+                    sink.savePropertiesEnvelope(id, core.parseLivelyProperties(propsSource.readText()))
+                }.onFailure { logger("Could not save properties for $id: $it") }
             }
 
             Result.Ok(meta)
@@ -92,33 +108,6 @@ class BundleImporter(context: Context) {
     private fun fail(dir: File, message: String): Result {
         dir.deleteRecursively()
         return Result.Error(message)
-    }
-
-    /**
-     * Concatenates every .js/.html/.htm file in the bundle (per-file and total
-     * caps so a hostile bundle can't OOM the import) — the input the Rust
-     * screener inspects. Mirrors ÆtherDesk's collectAllScriptSource.
-     */
-    private fun collectScriptSource(dir: File): String {
-        val sb = StringBuilder()
-        dir.walkTopDown()
-            .filter { it.isFile && it.extension.lowercase() in SCRIPT_EXTENSIONS }
-            .forEach { file ->
-                if (sb.length >= TOTAL_SCRIPT_CAP) return@forEach
-                runCatching {
-                    file.inputStream().use { input ->
-                        val bytes = input.readNBytes(PER_FILE_SCRIPT_CAP)
-                        sb.append(String(bytes, Charsets.UTF_8)).append('\n')
-                    }
-                }
-            }
-        return sb.toString()
-    }
-
-    private companion object {
-        val SCRIPT_EXTENSIONS = setOf("js", "html", "htm")
-        const val PER_FILE_SCRIPT_CAP = 1_000_000 // 1 MB, matches AetherDesk
-        const val TOTAL_SCRIPT_CAP = 8_000_000
     }
 
     private data class Validation(
@@ -133,7 +122,7 @@ class BundleImporter(context: Context) {
 
     private fun validateBundle(dir: File, infoFile: File): Validation? {
         val o = JSONObject(
-            LumenfallCore.validateBundle(
+            core.validateBundle(
                 infoJson = infoFile.readText(),
                 basePath = BundleFiles.metadataBasePath(dir, infoFile),
                 filesJson = BundleFiles.fileInventory(dir).toString()
@@ -149,6 +138,70 @@ class BundleImporter(context: Context) {
             previewPath = o.stringOrNull("preview_path")
         )
     }
+}
+
+/** Persistence boundary of an import; [BundleStore] is the production implementation. */
+interface ImportSink {
+    fun saveMeta(meta: BundleMeta)
+    fun saveScreeningEnvelope(id: String, envelope: String)
+    fun savePropertiesEnvelope(id: String, envelope: String)
+}
+
+internal data class ScriptCollection(val source: String, val skipped: List<String>)
+
+private const val TAG = "BundleImporter"
+private val SCRIPT_EXTENSIONS = setOf("js", "html", "htm")
+private const val PER_FILE_SCRIPT_CAP = 1_000_000 // 1 MB, matches AetherDesk
+private const val TOTAL_SCRIPT_CAP = 8_000_000
+
+/**
+ * Concatenates every .js/.html/.htm file in the bundle (per-file and total
+ * caps so a hostile bundle can't OOM the import) — the input the Rust
+ * screener inspects. Mirrors ÆtherDesk's collectAllScriptSource.
+ *
+ * Files the screener never saw — unreadable, or left out because the total cap
+ * was reached — are returned in `skipped` (bundle-relative paths) and logged.
+ * Files merely truncated at the per-file cap are not skipped: the screener saw
+ * their head.
+ */
+internal fun collectScriptSource(dir: File, logger: (String) -> Unit = { Log.w(TAG, it) }): ScriptCollection {
+    val sb = StringBuilder()
+    val skipped = mutableListOf<String>()
+    dir.walkTopDown()
+        .filter { it.isFile && it.extension.lowercase() in SCRIPT_EXTENSIONS }
+        .forEach { file ->
+            val rel = file.relativeTo(dir).invariantSeparatorsPath
+            if (sb.length >= TOTAL_SCRIPT_CAP) {
+                skipped += rel
+                logger("Screening skipped $rel: total script cap reached")
+                return@forEach
+            }
+            try {
+                file.inputStream().use { input ->
+                    val bytes = input.readNBytes(PER_FILE_SCRIPT_CAP)
+                    sb.append(String(bytes, Charsets.UTF_8)).append('\n')
+                }
+            } catch (e: Exception) {
+                skipped += rel
+                logger("Screening skipped $rel: $e")
+            }
+        }
+    return ScriptCollection(sb.toString(), skipped)
+}
+
+/**
+ * Rewrites an "allowed" screening envelope to "limited" because some script
+ * files could not be screened. Every other field is kept; the note is added to
+ * `issues` and to `warnings`, which is what [BundleScreening] (and so the UI) reads.
+ */
+private fun downgradeToLimited(report: JSONObject, skippedCount: Int): JSONObject {
+    val note = "$skippedCount script file(s) could not be read for screening"
+    report.put("classification", "limited")
+    for (key in listOf("issues", "warnings")) {
+        val arr = report.optJSONArray(key) ?: JSONArray().also { report.put(key, it) }
+        arr.put(note)
+    }
+    return report
 }
 
 private fun JSONObject.stringOrNull(key: String): String? =
