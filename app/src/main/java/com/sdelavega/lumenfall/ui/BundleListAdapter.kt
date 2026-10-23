@@ -6,6 +6,8 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.os.Handler
+import android.os.Looper
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -19,6 +21,7 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.sdelavega.lumenfall.R
+import java.util.concurrent.Executors
 
 /**
  * One library row. [thumbnailPath] is a file path, or `asset:<path>` for a
@@ -43,6 +46,19 @@ data class BundleRow(
 object BundleRowDiff : DiffUtil.ItemCallback<BundleRow>() {
     override fun areItemsTheSame(oldItem: BundleRow, newItem: BundleRow) = oldItem.id == newItem.id
     override fun areContentsTheSame(oldItem: BundleRow, newItem: BundleRow) = oldItem == newItem
+}
+
+/**
+ * BitmapFactory `inSampleSize` for a [width] x [height] source shown in a square tile
+ * of [targetPx]: the largest power of two that keeps the short side at or above the
+ * target (the tile crops to fill, so the short side decides).
+ */
+internal fun sampleSizeFor(width: Int, height: Int, targetPx: Int): Int {
+    val shortSide = minOf(width, height)
+    if (shortSide <= 0 || targetPx <= 0) return 1
+    var sample = 1
+    while (shortSide / (sample * 2) >= targetPx) sample *= 2
+    return sample
 }
 
 class BundleListAdapter(
@@ -124,19 +140,45 @@ class BundleListAdapter(
         if (holder.boundThumbPath != item.thumbnailPath || holder.boundThumbVersion != item.thumbnailVersion) {
             holder.boundThumbPath = item.thumbnailPath
             holder.boundThumbVersion = item.thumbnailVersion
-            holder.thumb.setImageBitmap(item.thumbnailPath?.let { decode(context, it) })
+            holder.thumb.setImageBitmap(null)
+            val path = item.thumbnailPath
+            if (path != null) {
+                val version = item.thumbnailVersion
+                val target = GlassUi.dp(context, 72)
+                decoder.execute {
+                    // Off the main thread, downsampled to the tile; a bundle's own preview
+                    // can be a multi-megapixel image.
+                    val bmp = decode(context, path, target)
+                    mainHandler.post {
+                        // The holder may have been rebound to another row meanwhile.
+                        if (holder.boundThumbPath == path && holder.boundThumbVersion == version) {
+                            holder.thumb.setImageBitmap(bmp)
+                        }
+                    }
+                }
+            }
         }
     }
 
-    private fun decode(context: Context, path: String): Bitmap? = runCatching {
-        if (path.startsWith(ASSET_PREFIX)) {
-            context.assets.open(path.removePrefix(ASSET_PREFIX)).use { BitmapFactory.decodeStream(it) }
-        } else {
-            BitmapFactory.decodeFile(path)
+    private fun decode(context: Context, path: String, targetPx: Int): Bitmap? = runCatching {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        open(context, path).use { BitmapFactory.decodeStream(it, null, bounds) }
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, targetPx)
         }
+        open(context, path).use { BitmapFactory.decodeStream(it, null, opts) }
     }.getOrNull()
+
+    private fun open(context: Context, path: String): java.io.InputStream =
+        if (path.startsWith(ASSET_PREFIX)) context.assets.open(path.removePrefix(ASSET_PREFIX))
+        else java.io.FileInputStream(path)
+
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     companion object {
         const val ASSET_PREFIX = "asset:"
+        private val decoder = Executors.newFixedThreadPool(2) { r ->
+            Thread(r, "thumb-decode").apply { isDaemon = true }
+        }
     }
 }
