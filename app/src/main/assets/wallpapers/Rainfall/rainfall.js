@@ -671,35 +671,55 @@
     if (stage.height !== h) stage.height = h;
   }
 
+  var FAILURE_LIMIT = 30;   // consecutive failed frames before falling back to 2D
+  var failures = 0;
+
   function freshCanvas() {
     var c = document.createElement('canvas');
     c.id = 'stage';
     stage.parentNode.replaceChild(c, stage);
     stage = c;
-    stage.addEventListener('webglcontextlost', onContextLost, false);
-    stage.addEventListener('webglcontextrestored', onContextRestored, false);
     return c;
+  }
+
+  function useCanvasFallback() {
+    renderer = new CanvasRenderer(freshCanvas());
+    sizeCanvas();
+    failures = 0;
+    if (bgSource) renderer.setBackground(bgSource);
   }
 
   function createRenderer() {
     sizeCanvas();
+    stage.addEventListener('webglcontextlost', onContextLost, false);
+    stage.addEventListener('webglcontextrestored', onContextRestored, false);
     try {
       renderer = new GLRenderer(stage);
+      if (bgSource) renderer.setBackground(bgSource);
     } catch (e) {
       // A canvas that failed WebGL setup cannot give a 2D context reliably.
-      renderer = new CanvasRenderer(freshCanvas());
-      sizeCanvas();
+      useCanvasFallback();
     }
-    if (bgSource) renderer.setBackground(bgSource);
   }
 
   function onContextLost(ev) {
+    if (ev.target !== stage) return;
+    // Without preventDefault the browser will never restore the context.
     ev.preventDefault();
     renderer = null;
   }
 
-  function onContextRestored() {
-    createRenderer();
+  function onContextRestored(ev) {
+    if (ev.target !== stage) return;
+    // All GL objects died with the old context: rebuild them from scratch.
+    try {
+      renderer = new GLRenderer(stage);
+      failures = 0;
+      if (bgSource) renderer.setBackground(bgSource);
+    } catch (e) {
+      console.warn('Rainfall: could not restore WebGL, using 2D fallback');
+      useCanvasFallback();
+    }
   }
 
   function frame() {
@@ -711,8 +731,14 @@
     if (renderer) {
       try {
         renderer.draw(dt, now);
+        failures = 0;
       } catch (e) {
-        // Keep the loop alive; one bad frame must not stop the wallpaper.
+        // One bad frame must not stop the wallpaper; a persistent failure
+        // switches to the 2D renderer rather than leaving the screen black.
+        if (failures === 0) console.warn('Rainfall: frame failed: ' + e);
+        if (++failures >= FAILURE_LIMIT) {
+          try { useCanvasFallback(); } catch (e2) { console.warn('Rainfall: fallback failed: ' + e2); }
+        }
       }
     }
     kick();
