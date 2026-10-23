@@ -32,12 +32,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import com.sdelavega.lumenfall.R
+import com.sdelavega.lumenfall.render.BundleDeletedBus
 import com.sdelavega.lumenfall.render.GeolocationBus
 import com.sdelavega.lumenfall.render.PropertyBus
 import com.sdelavega.lumenfall.storage.AppSettingsStore
-import com.sdelavega.lumenfall.storage.BundleProperty
 import com.sdelavega.lumenfall.storage.BundleStore
 import com.sdelavega.lumenfall.storage.BundledWallpapers
+import com.sdelavega.lumenfall.storage.PropertyParseResult
+import com.sdelavega.lumenfall.storage.PropertySchema
 import com.sdelavega.lumenfall.web.BundleWebView
 import com.sdelavega.lumenfall.web.ContactedDomains
 import com.sdelavega.lumenfall.web.GeolocationPolicy
@@ -139,10 +141,15 @@ class BundleSettingsActivity : AppCompatActivity() {
         bundleId = intent.getStringExtra(EXTRA_BUNDLE_ID) ?: return finish()
 
         val meta = store.get(bundleId).also { meta = it }
-        val props = store.properties(bundleId)
+        // A bundle deleted while this screen is open (e.g. from the library)
+        // must not leave a settings screen behind; finish() runs onDestroy,
+        // which releases the preview.
+        BundleDeletedBus.register(this) { deletedId -> if (deletedId == bundleId) finish() }
+        val parsed = store.propertySchema(bundleId)
+        val props = (parsed as? PropertyParseResult.Ok)?.properties ?: emptyList()
         val effective = store.effectiveValues(bundleId)
         props.forEach { p ->
-            displayNames[p.key] = p.displayName
+            displayNames[p.key] = p.label
             currentValues[p.key] = currentOf(p, effective)
         }
 
@@ -162,7 +169,11 @@ class BundleSettingsActivity : AppCompatActivity() {
         }
 
         val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        if (props.isEmpty()) {
+        if (parsed is PropertyParseResult.Failed) {
+            form.addView(noteText(getString(R.string.settings_parse_failed, parsed.reason)).apply {
+                setPadding(0, dp(24), 0, 0)
+            })
+        } else if (props.isEmpty()) {
             form.addView(noteText("This bundle has no configurable properties.").apply {
                 setPadding(0, dp(24), 0, 0)
             })
@@ -213,8 +224,17 @@ class BundleSettingsActivity : AppCompatActivity() {
         relayout()
     }
 
-    private fun currentOf(p: BundleProperty, effective: JSONObject): Any? =
-        if (effective.has(p.key)) effective.get(p.key) else p.defaultValue
+    private fun currentOf(p: PropertySchema, effective: JSONObject): Any? =
+        if (effective.has(p.key)) effective.get(p.key) else when (p) {
+            is PropertySchema.Slider -> p.default
+            is PropertySchema.Color -> p.default
+            is PropertySchema.Checkbox -> p.default
+            is PropertySchema.Dropdown -> if (p.valueIsName) p.items.getOrNull(p.defaultIndex) else p.defaultIndex
+            is PropertySchema.FolderDropdown -> p.default
+            is PropertySchema.Text -> p.default
+            is PropertySchema.Button -> null
+            is PropertySchema.Label -> null
+        }
 
     /**
      * Persist the override, nudge the running wallpaper/preview, and remember
@@ -422,6 +442,10 @@ class BundleSettingsActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (store.get(bundleId) == null) {
+            finish()
+            return
+        }
         preview?.let {
             it.onResume()
             WebViewTimers.setNeedsTimers(this, it, true)
@@ -461,6 +485,7 @@ class BundleSettingsActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         governor?.stop()
+        BundleDeletedBus.unregister(this)
         PropertyBus.unregister(this)
         preview?.let { BundleWebView.flushPendingProperties(it) }
         preview?.let { WebViewTimers.forget(this, it) }
@@ -477,29 +502,29 @@ class BundleSettingsActivity : AppCompatActivity() {
         addView(inner)
     }
 
-    private fun controlFor(p: BundleProperty, current: Any?): View {
+    private fun controlFor(p: PropertySchema, current: Any?): View {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        if (p.type.equals("label", ignoreCase = true)) {
+        if (p is PropertySchema.Label) {
             box.addView(TextView(this).apply {
-                text = (current ?: p.displayName).toString()
+                text = (current ?: p.label).toString()
                 setTextColor(getColor(R.color.glass_text_primary))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             })
             return box
         }
         box.addView(TextView(this).apply {
-            text = p.displayName
+            text = p.label
             setTextColor(getColor(R.color.glass_text_secondary))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setPadding(0, 0, 0, dp(6))
         })
-        val control = when (p.type.lowercase()) {
-                "slider" -> sliderControl(p, current)
-                "checkbox" -> switchControl(p, current)
-                "dropdown" -> dropdownControl(p, current)
-                "folderdropdown" -> folderDropdownControl(p, current)
-                "color" -> colorControl(p, current)
-                "button" -> MaterialButton(this).apply {
+        val control = when (p) {
+                is PropertySchema.Slider -> sliderControl(p, current)
+                is PropertySchema.Checkbox -> switchControl(p, current)
+                is PropertySchema.Dropdown -> dropdownControl(p, current)
+                is PropertySchema.FolderDropdown -> folderDropdownControl(p, current)
+                is PropertySchema.Color -> colorControl(p, current)
+                is PropertySchema.Button -> MaterialButton(this).apply {
                     text = "Run"
                     backgroundTintList = ColorStateList.valueOf(getColor(R.color.glass_field_fill))
                     setTextColor(getColor(R.color.glass_accent))
@@ -509,7 +534,8 @@ class BundleSettingsActivity : AppCompatActivity() {
                     insetBottom = 0
                     setOnClickListener { PropertyBus.notify(bundleId, p.key, true) }
                 }
-                else -> textControl(p, current) // textbox + unknown -> editable text
+                is PropertySchema.Text -> textControl(p.key, current)
+                is PropertySchema.Label -> textControl(p.key, current) // unreachable: handled above
             }
         if (p.key == "manualLocation") {
             manualLocationField = control as? EditText
@@ -527,10 +553,10 @@ class BundleSettingsActivity : AppCompatActivity() {
         edit.hint = if (manual) "City name or ZIP" else "Ignored while location mode is auto"
     }
 
-    private fun sliderControl(p: BundleProperty, current: Any?): View {
-        val min = p.raw.optDouble("min", 0.0)
-        val max = p.raw.optDouble("max", 100.0)
-        val step = p.raw.optDouble("step", 1.0).let { if (it <= 0.0) 1.0 else it }
+    private fun sliderControl(p: PropertySchema.Slider, current: Any?): View {
+        val min = p.min
+        val max = p.max
+        val step = p.step
         val integral = step % 1.0 == 0.0 && min % 1.0 == 0.0
         val steps = maxOf(1, ((max - min) / step).roundToInt())
         val snappedMax = min + steps * step // Slider requires an evenly divisible range
@@ -576,7 +602,7 @@ class BundleSettingsActivity : AppCompatActivity() {
         return row
     }
 
-    private fun switchControl(p: BundleProperty, current: Any?): View {
+    private fun switchControl(p: PropertySchema.Checkbox, current: Any?): View {
         val onTint = ColorStateList(
             arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
             intArrayOf(getColor(R.color.glass_accent), getColor(R.color.glass_track_inactive))
@@ -597,11 +623,11 @@ class BundleSettingsActivity : AppCompatActivity() {
             textOn = ""
             textOff = ""
             isChecked = current as? Boolean ?: false
-            contentDescription = "${p.displayName}, ${if (isChecked) "on" else "off"}"
+            contentDescription = "${p.label}, ${if (isChecked) "on" else "off"}"
             trackTintList = onTint
             thumbTintList = thumbTint
             listener = { view, checked ->
-                view.contentDescription = "${p.displayName}, ${if (checked) "on" else "off"}"
+                view.contentDescription = "${p.label}, ${if (checked) "on" else "off"}"
                 apply(p.key, checked)
             }
             setOnCheckedChangeListener { view, checked -> listener(view, checked) }
@@ -609,16 +635,15 @@ class BundleSettingsActivity : AppCompatActivity() {
         liveControls[p.key] = { v ->
             toggle.setOnCheckedChangeListener(null)
             toggle.isChecked = v as? Boolean ?: false
-            toggle.contentDescription = "${p.displayName}, ${if (toggle.isChecked) "on" else "off"}"
+            toggle.contentDescription = "${p.label}, ${if (toggle.isChecked) "on" else "off"}"
             toggle.setOnCheckedChangeListener { view, checked -> listener(view, checked) }
         }
         return toggle
     }
 
-    private fun dropdownControl(p: BundleProperty, current: Any?): View {
-        val itemsArr = p.raw.optJSONArray("items") ?: return textControl(p, current)
-        val items = (0 until itemsArr.length()).map { itemsArr.optString(it) }
-        val valueIsString = p.defaultValue is String || current is String
+    private fun dropdownControl(p: PropertySchema.Dropdown, current: Any?): View {
+        val items = p.items
+        val valueIsString = p.valueIsName || current is String
         fun selectedIndex(value: Any?): Int {
             val rawIndex = when (value) {
                 is Number -> value.toInt()
@@ -652,9 +677,9 @@ class BundleSettingsActivity : AppCompatActivity() {
         return spinner
     }
 
-    private fun folderDropdownControl(p: BundleProperty, current: Any?): View {
+    private fun folderDropdownControl(p: PropertySchema.FolderDropdown, current: Any?): View {
         val values = folderDropdownValues(p)
-        if (values.isEmpty()) return textControl(p, current)
+        if (values.isEmpty()) return textControl(p.key, current)
         val labels = values.map { it.substringAfterLast('/') }
         fun selectedIndex(value: Any?): Int {
             val s = value as? String ?: return 0
@@ -684,8 +709,8 @@ class BundleSettingsActivity : AppCompatActivity() {
         return spinner
     }
 
-    private fun folderDropdownValues(p: BundleProperty): List<String> {
-        val folder = p.raw.optString("folder").trim().trim('/')
+    private fun folderDropdownValues(p: PropertySchema.FolderDropdown): List<String> {
+        val folder = p.folder.trim().trim('/')
         if (folder.isEmpty()) return emptyList()
         val names = if (BundledWallpapers.isBundled(bundleId)) {
             val bundledFolder = BundledWallpapers.folderFor(bundleId) ?: return emptyList()
@@ -695,7 +720,7 @@ class BundleSettingsActivity : AppCompatActivity() {
             runCatching { store.fileFor(bundleId, folder).list()?.toList().orEmpty() }
                 .getOrDefault(emptyList())
         }
-        val extensions = folderDropdownExtensions(p.raw.optString("filter"))
+        val extensions = p.extensions
         return names
             .filter { name ->
                 extensions.isEmpty() || extensions.contains(name.substringAfterLast('.', "").lowercase())
@@ -703,15 +728,6 @@ class BundleSettingsActivity : AppCompatActivity() {
             .sorted()
             .map { "$folder/$it" }
     }
-
-    private fun folderDropdownExtensions(filter: String): Set<String> =
-        filter.split('|')
-            .mapNotNull { pattern ->
-                pattern.substringAfterLast('.', missingDelimiterValue = "")
-                    .takeIf { it.isNotBlank() && !it.contains('*') }
-                    ?.lowercase()
-            }
-            .toSet()
 
     private fun glassSpinnerAdapter(items: List<String>): ArrayAdapter<String> =
         object : ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, items) {
@@ -730,7 +746,7 @@ class BundleSettingsActivity : AppCompatActivity() {
             }
         }
 
-    private fun colorControl(p: BundleProperty, current: Any?): View {
+    private fun colorControl(p: PropertySchema.Color, current: Any?): View {
         val initial = (current as? String) ?: "#ffffff"
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val row = LinearLayout(this).apply {
@@ -789,15 +805,15 @@ class BundleSettingsActivity : AppCompatActivity() {
         return column
     }
 
-    private fun textControl(p: BundleProperty, current: Any?): View {
+    private fun textControl(key: String, current: Any?): View {
         val edit = EditText(this).apply {
             setText(current?.toString() ?: "")
             setTextColor(getColor(R.color.glass_text_primary))
             setBackgroundResource(R.drawable.glass_field_bg)
             setPadding(dp(12), dp(8), dp(12), dp(8))
         }
-        val watcher = edit.afterTextChanged { apply(p.key, it) }
-        liveControls[p.key] = { v -> edit.setTextSilently(watcher, v?.toString() ?: "") }
+        val watcher = edit.afterTextChanged { apply(key, it) }
+        liveControls[key] = { v -> edit.setTextSilently(watcher, v?.toString() ?: "") }
         return edit
     }
 

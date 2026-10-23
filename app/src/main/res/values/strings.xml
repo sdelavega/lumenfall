@@ -2,4 +2,5 @@
     <string name="app_name">Lumenfall</string>
     <string name="wallpaper_service_name">Lumenfall Live Wallpaper</string>
     <string name="wallpaper_description">Lively-compatible live wallpapers for Android tablets.</string>
+    <string name="settings_parse_failed">Couldn\'t read this wallpaper\'s settings: %1$s</string>
 </resources>

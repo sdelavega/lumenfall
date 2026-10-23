@@ -34,6 +34,7 @@ import com.sdelavega.lumenfall.service.LumenfallWallpaperService
 import com.sdelavega.lumenfall.storage.AppSettingsStore
 import com.sdelavega.lumenfall.storage.BundleMeta
 import com.sdelavega.lumenfall.storage.BundleStore
+import com.sdelavega.lumenfall.storage.PropertyParseResult
 import com.sdelavega.lumenfall.storage.BundledWallpapers
 import com.sdelavega.lumenfall.storage.PerformanceSettings
 import com.sdelavega.lumenfall.web.BundleThumbnailer
@@ -283,7 +284,7 @@ class MainActivity : AppCompatActivity() {
         // Bundles with LivelyProperties expose a settings entry point; so does
         // every web bundle regardless — its settings screen carries the live
         // preview and the contacted-domains transparency readout.
-        if (meta.kind == "web" || store.properties(meta.id).isNotEmpty()) {
+        if (meta.kind == "web" || store.propertySchema(meta.id).let { it is PropertyParseResult.Failed || (it as? PropertyParseResult.Ok)?.properties?.isNotEmpty() == true }) {
             row.addView(GlassUi.settingsButton(this, "Settings") {
                 startActivity(
                     Intent(this@MainActivity, BundleSettingsActivity::class.java)

@@ -152,20 +152,6 @@ class BundleStore(context: Context) {
         PropertyParseResult.Failed(e.message ?: e.javaClass.simpleName)
     }
 
-    @Deprecated("Task 11 removes this; use propertySchema", ReplaceWith("propertySchema(id)"))
-    fun properties(id: String): List<BundleProperty> =
-        if (BundledWallpapers.isBundled(id)) {
-            // Bundled wallpapers: parse from assets via Rust, cached per call.
-            // No on-disk properties.json to read from.
-            val envelope = BundledWallpapers.propertiesEnvelope(app, id) ?: return emptyList()
-            runCatching {
-                val parsed = com.sdelavega.lumenfall.core.LumenfallCore.parseLivelyProperties(envelope)
-                BundleProperty.parseEnvelope(parsed)
-            }.getOrDefault(emptyList())
-        } else {
-            runCatching { BundleProperty.parseEnvelope(propsFile(id).readText()) }.getOrDefault(emptyList())
-        }
-
     fun overrides(id: String): JSONObject =
         if (BundledWallpapers.isBundled(id)) {
             // Overrides for bundled wallpapers live in SharedPreferences only
