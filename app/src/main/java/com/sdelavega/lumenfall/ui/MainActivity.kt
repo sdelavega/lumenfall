@@ -418,8 +418,17 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, dp(8), 0, 0)
         })
         column.addView(TextView(this).apply {
-            text = "Wallpapers run sandboxed: no filesystem access, no ad/tracker/miner " +
-                "domains, and SSRF-protected network requests."
+            text = "Wallpapers run sandboxed: no filesystem access, no known ad/tracker/miner " +
+                "domains, and network requests are blocked for local addresses unless " +
+                "you allow them (WebSockets on a best-effort basis)."
+            setTextColor(getColor(R.color.glass_text_body))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setPadding(0, dp(8), 0, 0)
+        })
+        // GPL "Appropriate Legal Notices": copyright, no warranty, licence, source.
+        column.addView(TextView(this).apply {
+            text = "${listOfNotNull("Lumenfall", version).joinToString(" ")} \u00A9 2026 Stephen de la Vega. Free software under " +
+                "GPL-3.0-or-later, without warranty. Source: https://github.com/sdelavega/lumenfall"
             setTextColor(getColor(R.color.glass_text_body))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setPadding(0, dp(8), 0, 0)

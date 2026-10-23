@@ -3,7 +3,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Regenerates the open-source licence notices from the bundled wallpapers, the
 # Rust crate graph (Cargo.lock) and a fixed list of Android libraries. Output is
-# sorted and deterministic, so a regenerate-and-diff shows any drift.
+# sorted and deterministic, so a regenerate-and-diff shows any drift. The MIT and
+# Apache-2.0 texts (scripts/license-texts/) are appended once each, and every
+# component is listed with its copyright holder where one is known (crate
+# `authors` from cargo metadata, fixed lists for Android libraries and wallpapers).
 #   app/src/main/assets/licenses/third_party.txt   shown by About > Open-source licences
 #   THIRD_PARTY.md                                  the same content for the repository
 set -euo pipefail
@@ -17,7 +20,7 @@ mkdir -p "$(dirname "$TXT")"
 CARGO_JSON="$("$CARGO_BIN" metadata --format-version 1 --locked)"
 
 CARGO_JSON="$CARGO_JSON" python3 -I - "$TXT" "$MD" <<'PY'
-import json, os, sys
+import json, os, re, sys
 
 txt_path, md_path = sys.argv[1], sys.argv[2]
 wall_root = "app/src/main/assets/wallpapers"
@@ -30,6 +33,19 @@ NESTED = {"WeatherAether": ("three.js", "MIT")}
 # (heading, [(name, version, licence, source)])
 sections = []
 
+# Copyright holders the vendored files do not state themselves (the vendored folders
+# stay untouched; Neon City ships no licence file: upstream will add one, ruling R27).
+AUTHOR_OVERRIDE = {"NeonCity": "Stephen de la Vega"}
+COPYRIGHT = {"NeonCity": "Copyright (c) 2026 Stephen de la Vega"}
+LICENSE_TEXTS = [
+    ("MIT", "scripts/license-texts/MIT.txt"),
+    ("Apache-2.0", "scripts/license-texts/Apache-2.0.txt"),
+]
+
+def read_text(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read().rstrip("\n")
+
 # --- Wallpapers ---------------------------------------------------------
 walls = []
 for folder in sorted(os.listdir(wall_root)):
@@ -39,7 +55,7 @@ for folder in sorted(os.listdir(wall_root)):
     with open(os.path.join(d, "LivelyInfo.json"), encoding="utf-8") as f:
         info = json.load(f)
     title = info.get("Title") or folder
-    author = info.get("Author") or "unknown"
+    author = AUTHOR_OVERRIDE.get(folder) or info.get("Author") or "unknown"
     lic = info.get("License")
     source = info.get("Contact") or ""
     if folder in VENDORED:
@@ -64,20 +80,22 @@ meta = json.loads(os.environ["CARGO_JSON"])
 members = set(meta["workspace_members"])
 crates = sorted(
     ((p["name"], p["version"], p.get("license") or ("see " + p["license_file"] if p.get("license_file") else "unspecified"),
-      p.get("repository") or "")
+      p.get("repository") or "",
+      ", ".join(re.sub(r"\s*<[^>]*>", "", a).strip() for a in p.get("authors") or [] if a.strip()))
      for p in meta["packages"] if p["id"] not in members))
 
 # --- Android libraries (fixed list) ----------------------------------------
+AOSP = "Copyright The Android Open Source Project"
 android = [
-    ("androidx.core:core-ktx", "Apache-2.0"),
-    ("androidx.activity:activity-ktx", "Apache-2.0"),
-    ("androidx.appcompat:appcompat", "Apache-2.0"),
-    ("androidx.webkit:webkit", "Apache-2.0"),
-    ("androidx.recyclerview:recyclerview", "Apache-2.0"),
-    ("androidx.media3:media3-exoplayer", "Apache-2.0"),
-    ("androidx.media3:media3-ui", "Apache-2.0"),
-    ("com.google.android.material:material", "Apache-2.0"),
-    ("org.jetbrains.kotlin:kotlin-stdlib", "Apache-2.0"),
+    ("androidx.core:core-ktx", "Apache-2.0", AOSP),
+    ("androidx.activity:activity-ktx", "Apache-2.0", AOSP),
+    ("androidx.appcompat:appcompat", "Apache-2.0", AOSP),
+    ("androidx.webkit:webkit", "Apache-2.0", AOSP),
+    ("androidx.recyclerview:recyclerview", "Apache-2.0", AOSP),
+    ("androidx.media3:media3-exoplayer", "Apache-2.0", AOSP),
+    ("androidx.media3:media3-ui", "Apache-2.0", AOSP),
+    ("com.google.android.material:material", "Apache-2.0", "Copyright Google LLC"),
+    ("org.jetbrains.kotlin:kotlin-stdlib", "Apache-2.0", "Copyright JetBrains s.r.o. and Kotlin Programming Language contributors"),
 ]
 android.sort()
 
@@ -88,17 +106,25 @@ def txt():
         out.append(f"{title} [{folder}]")
         out.append(f"  Author: {author}")
         out.append(f"  License: {lic}" + (f" (see {folder}/{lf})" if lf else ""))
+        if folder in COPYRIGHT:
+            out.append(f"  {COPYRIGHT[folder]}")
         if source:
             out.append(f"  Source: {source}")
         if nested:
             out.append(f"  Includes: {nested[0]} - {nested[1]}" + (f" (see {folder}/{nested[2]})" if nested[2] else ""))
         out.append("")
     out += ["RUST CRATES", "==========="]
-    for n, v, l, r in crates:
+    for n, v, l, r, a in crates:
         out.append(f"{n} {v} - {l}" + (f" - {r}" if r else ""))
+        if a:
+            out.append(f"  Copyright: {a}")
     out += ["", "ANDROID LIBRARIES", "================="]
-    for n, l in android:
+    for n, l, c in android:
         out.append(f"{n} - {l}")
+        out.append(f"  {c}")
+    out += ["", "LICENCE TEXTS", "============="]
+    for name, path in LICENSE_TEXTS:
+        out += ["", f"--- {name} ---", "", read_text(path)]
     return "\n".join(out) + "\n"
 
 def md():
@@ -111,13 +137,18 @@ def md():
         if nested:
             lic = f"{lic}; includes {nested[0]} ({nested[1]})"
             lf = lf or nested[2]
+        if folder in COPYRIGHT:
+            lic = f"{lic} ({COPYRIGHT[folder]})"
         out.append(f"| {title} | `{folder}` | {author} | {lic} | " + (f"`{folder}/{lf}`" if lf else "") + f" | {source} |")
-    out += ["", "## Rust crates", "", "| Crate | Version | Licence | Repository |", "|---|---|---|---|"]
-    for n, v, l, r in crates:
-        out.append(f"| {n} | {v} | {l} | {r} |")
-    out += ["", "## Android libraries", "", "| Library | Licence |", "|---|---|"]
-    for n, l in android:
-        out.append(f"| {n} | {l} |")
+    out += ["", "## Rust crates", "", "| Crate | Version | Licence | Copyright | Repository |", "|---|---|---|---|---|"]
+    for n, v, l, r, a in crates:
+        out.append(f"| {n} | {v} | {l} | {a} | {r} |")
+    out += ["", "## Android libraries", "", "| Library | Licence | Copyright |", "|---|---|---|"]
+    for n, l, c in android:
+        out.append(f"| {n} | {l} | {c} |")
+    out += ["", "## Licence texts"]
+    for name, path in LICENSE_TEXTS:
+        out += ["", f"### {name}", "", "```text", read_text(path), "```"]
     return "\n".join(out) + "\n"
 
 open(txt_path, "w", encoding="utf-8").write(txt())
