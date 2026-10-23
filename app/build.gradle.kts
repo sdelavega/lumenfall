@@ -80,6 +80,12 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            // AGP would embed META-INF/version-control-info.textproto (the git commit,
+            // or NO_VALID_GIT_FOUND from a worktree). That differs between a clone and a
+            // copy, so it would break reproducible builds; `repro` inherits this.
+            vcsInfo {
+                include = false
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
