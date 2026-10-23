@@ -529,9 +529,10 @@ class MainActivity : AppCompatActivity() {
             confirmText = "Delete",
             destructive = true
         ) {
-            store.delete(meta.id)
             ContactedDomains.clear(meta.id)
-            refresh()
+            // State clears at once; the files go in the background and the list
+            // refreshes once they are gone.
+            store.delete(meta.id) { refresh() }
         }
     }
 

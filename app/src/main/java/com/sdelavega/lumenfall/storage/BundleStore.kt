@@ -3,12 +3,16 @@
 package com.sdelavega.lumenfall.storage
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import org.json.JSONObject
 import com.sdelavega.lumenfall.core.LumenfallCore
 import com.sdelavega.lumenfall.importer.ImportSink
+import com.sdelavega.lumenfall.render.ActiveBundleBus
 import com.sdelavega.lumenfall.render.BundleDeletedBus
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 
 /**
  * Metadata for one imported wallpaper bundle. The actual bundle files live in
@@ -60,6 +64,27 @@ internal fun parseOverrides(text: String?): JSONObject =
 internal fun bridgedDropdownDefault(d: PropertySchema.Dropdown): Any =
     if (d.valueIsName) d.items.getOrElse(d.defaultIndex) { "" } else d.defaultIndex
 
+/**
+ * The pointer/notification half of a bundle delete. Clearing the active pointer is
+ * followed by an [notifyActiveChanged] nudge so the running engine rebuilds onto the
+ * placeholder instead of rendering a bundle whose files are about to vanish.
+ */
+internal fun applyDeletePointers(
+    id: String,
+    activeId: String?,
+    previousActiveId: String?,
+    clearActive: () -> Unit,
+    clearPrevious: () -> Unit,
+    notifyActiveChanged: () -> Unit,
+    notifyDeleted: (String) -> Unit
+) {
+    val wasActive = activeId == id
+    if (wasActive) clearActive()
+    if (previousActiveId == id) clearPrevious()
+    if (wasActive) notifyActiveChanged()
+    notifyDeleted(id)
+}
+
 private fun JSONObject.stringOrNull(key: String): String? =
     if (!has(key) || isNull(key)) null else optString(key)
 
@@ -73,6 +98,7 @@ class BundleStore(context: Context) : ImportSink {
     val bundlesDir: File = File(app.filesDir, "bundles").apply { mkdirs() }
     private val prefs = app.getSharedPreferences("lumenfall", Context.MODE_PRIVATE)
     private val schemaCache = ConcurrentHashMap<String, PropertyParseResult>()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     init {
         PrefKeys.migrate(prefs)
@@ -96,14 +122,36 @@ class BundleStore(context: Context) : ImportSink {
 
     override fun saveMeta(meta: BundleMeta) = metaFile(meta.id).writeText(meta.toJson())
 
-    fun delete(id: String) {
-        if (BundledWallpapers.isBundled(id)) return // can't delete a bundled wallpaper
-        bundleDir(id).deleteRecursively()
+    /**
+     * Delete an imported bundle. State (pointers, prefs, schema cache) is cleared and
+     * the buses are notified straight away on the calling thread, so a running
+     * engine drops to the placeholder at once; the files (up to hundreds of MB) are
+     * removed on a background thread, and [onDone] then runs on the main thread so
+     * callers can refresh their list. A bundled wallpaper can't be deleted; [onDone]
+     * still runs.
+     */
+    fun delete(id: String, onDone: () -> Unit = {}) {
+        if (BundledWallpapers.isBundled(id)) {
+            mainHandler.post(onDone)
+            return
+        }
         schemaCache.remove(id)
         prefs.edit().remove(PrefKeys.geolocation(id)).remove(PrefKeys.overrides(id)).apply()
-        if (activeId == id) activeId = null
-        if (previousActiveId == id) previousActiveId = null
-        BundleDeletedBus.notifyDeleted(id)
+        applyDeletePointers(
+            id = id,
+            activeId = activeId,
+            previousActiveId = previousActiveId,
+            clearActive = { activeId = null },
+            clearPrevious = { previousActiveId = null },
+            notifyActiveChanged = { ActiveBundleBus.notifyChanged() },
+            notifyDeleted = { BundleDeletedBus.notifyDeleted(it) }
+        )
+        deleter.execute {
+            // Drop the metadata first so list() stops showing a half-deleted bundle.
+            metaFile(id).delete()
+            bundleDir(id).deleteRecursively()
+            mainHandler.post(onDone)
+        }
     }
 
     var activeId: String?
@@ -251,6 +299,10 @@ class BundleStore(context: Context) : ImportSink {
         const val PROPS_NAME = "properties.json"
         const val OVERRIDES_NAME = "overrides.json"
         const val SCREENING_NAME = "screening.json"
+        /** Serial: deletes never overlap each other or race a re-import of the same dir. */
+        private val deleter = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "bundle-delete").apply { isDaemon = true }
+        }
         internal const val KEY_ACTIVE = "active_bundle_id"
         internal const val KEY_PREVIOUS_ACTIVE = "previous_active_bundle_id"
     }
