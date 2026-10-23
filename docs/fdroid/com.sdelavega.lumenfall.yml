@@ -12,8 +12,8 @@
 # fdroidserver deletes gradlew before `build:`, so the .so is built here, not via
 # Gradle, with the exact command and RUSTFLAGS of cargoNdkBuild in
 # app/build.gradle.kts so the output matches the GitHub APK. Known risk: the later
-# Gradle run has no task history and may rerun cargoNdkBuild, which needs `cargo`
-# and `cargo-ndk` on PATH; check this in the test build.
+# Gradle run would rerun cargoNdkBuild (no task history), so `gradleprops` passes
+# -Plumenfall.prebuiltJni, which skips that task and fails fast if the .so is missing.
 
 Categories:
   - Theming
@@ -44,6 +44,8 @@ Builds:
     binary: https://github.com/sdelavega/lumenfall/releases/download/v%v/Lumenfall-%v.apk
     gradle:
       - yes
+    gradleprops:
+      - lumenfall.prebuiltJni
     ndk: 27.3.13750724
     build:
       - $$rustup$$/rustup-init.sh -y --default-toolchain 1.99.1 --target aarch64-linux-android --profile minimal

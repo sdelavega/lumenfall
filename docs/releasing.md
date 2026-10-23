@@ -80,6 +80,14 @@ in a fork of [fdroiddata](https://gitlab.com/fdroid/fdroiddata), run
 `fdroid lint com.sdelavega.lumenfall` and a test build, and open the merge
 request from your own GitLab account.
 
+The recipe builds `liblumenfall_core.so` itself with `cargo ndk` (same command and
+`RUSTFLAGS` as the `cargoNdkBuild` Gradle task, since fdroidserver deletes
+`gradlew` and Gradle's history before building) and passes
+`gradleprops: [lumenfall.prebuiltJni]`. That `-Plumenfall.prebuiltJni` property
+makes `cargoNdkBuild` skip itself, and fail with a clear message if
+`app/build/rustJniLibs/arm64-v8a/liblumenfall_core.so` is missing. Normal builds
+do not set it.
+
 Later releases: F-Droid's `UpdateCheckMode: Tags` notices the new `vX.Y.Z` tag,
 and `AutoUpdateMode: Version` adds the build entry automatically. F-Droid builds
 from source and, because the build is reproducible, verifies it against the

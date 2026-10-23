@@ -131,6 +131,21 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
         "$rustupHome=/rustup",
     ).joinToString(" ") { "--remap-path-prefix=$it" }
 
+    // -Plumenfall.prebuiltJni skips this task: the F-Droid recipe builds the .so
+    // itself (fdroidserver removes gradlew and Gradle's task history before the
+    // build) and passes the property. Normal builds leave it unset and build here.
+    val prebuiltJni = providers.gradleProperty("lumenfall.prebuiltJni").isPresent
+    val prebuiltSo = outDir.resolve("arm64-v8a/liblumenfall_core.so")
+    onlyIf {
+        if (prebuiltJni && !prebuiltSo.isFile) {
+            throw GradleException(
+                "lumenfall.prebuiltJni is set but $prebuiltSo is missing; " +
+                    "build it with cargo ndk first, or drop the property."
+            )
+        }
+        !prebuiltJni
+    }
+
     inputs.dir(rootProject.projectDir.resolve("core-rust/src"))
     inputs.file(rootProject.projectDir.resolve("core-rust/Cargo.toml"))
     inputs.file(rootProject.projectDir.resolve("Cargo.toml"))
