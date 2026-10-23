@@ -69,7 +69,14 @@ object BundleThumbnailer {
     private const val TIMEOUT_MS = 12_000L
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var running = false
+
+    /** Latest caller context; the process-wide queue's worker reads it at run time. */
+    private class Target(val app: Context, val store: BundleStore, val onProgress: () -> Unit)
+
+    private var target: Target? = null
+
+    /** One process-wide serial queue (main thread only). */
+    private val queue = ThumbnailQueue { id, done -> runJob(id, done) }
 
     fun bundledThumbnailFile(context: Context, meta: BundleMeta): File? {
         if (!BundledWallpapers.isBundled(meta.id)) return null
@@ -91,18 +98,26 @@ object BundleThumbnailer {
      * Generate thumbnails for every bundle that's missing one, one at a time
      * (a second concurrent WebView capture would just double memory pressure
      * for no latency win). Call from the main thread; safe to call repeatedly —
-     * a call while a generation is in flight is a no-op, and each finished
-     * thumbnail invokes [onProgress] (also on main) so the caller can refresh.
+     * ids already queued or in flight are ignored, and each finished thumbnail
+     * invokes [onProgress] (also on main) so the caller can refresh.
      */
     fun generateMissing(context: Context, store: BundleStore, onProgress: () -> Unit) {
-        if (running) return
         val app = context.applicationContext
-        val next = store.list().firstOrNull { needsThumbnail(app, store, it) } ?: return
-        running = true
-        generate(app, store, next) { updated ->
-            running = false
-            if (updated != null) onProgress()
-            generateMissing(app, store, onProgress)
+        target = Target(app, store, onProgress)
+        queue.enqueue(store.list().filter { needsThumbnail(app, store, it) }.map { it.id })
+    }
+
+    private fun runJob(id: String, done: () -> Unit) {
+        val t = target
+        val meta = t?.store?.list()?.firstOrNull { it.id == id }
+        if (t == null || meta == null || !needsThumbnail(t.app, t.store, meta)) {
+            done(); return
+        }
+        generate(t.app, t.store, meta) { updated ->
+            // Advance the queue first; progress (which may re-enter
+            // generateMissing) runs outside any queue state mutation.
+            done()
+            if (updated != null) t.onProgress()
         }
     }
 
