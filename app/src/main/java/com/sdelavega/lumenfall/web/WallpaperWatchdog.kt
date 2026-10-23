@@ -14,7 +14,7 @@ import android.os.SystemClock
  * arrives within [timeoutMs], the bundle is declared hung and [onHang] fires
  * once. Lumenfall already has a periodic signal that fits this role without
  * adding a dedicated ping: the bridge shim's tick message (`{"tick":...}`,
- * every 2s via `setInterval` — see `BundleWebView.buildShim`), which proves
+ * every 2s via `setInterval` — see `app/src/main/assets/bridge/aetherdesk-shim.js`), which proves
  * both that JS timers are still running and that the postMessage round-trip
  * still works. It's driven by `setInterval`, not `requestAnimationFrame`, so
  * a stalled rAF chain alone doesn't trip this — only a genuinely wedged JS

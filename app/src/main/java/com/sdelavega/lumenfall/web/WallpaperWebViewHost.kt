@@ -421,7 +421,7 @@ private class WallpaperPresentation(
     private val blockExternalNetwork: Boolean,
     private val allowLan: Boolean,
     private val initiallySuspended: Boolean,
-    private var pauseWhenHidden: Boolean,
+    @Volatile private var pauseWhenHidden: Boolean,
     private val bundleId: String?,
     private val allowGeolocation: Boolean,
     private val onHeartbeat: () -> Unit,
@@ -437,7 +437,7 @@ private class WallpaperPresentation(
     private var failed = false
     @Volatile private var contentVisible = true
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var policySuspended = initiallySuspended
+    @Volatile private var policySuspended = initiallySuspended
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -451,12 +451,12 @@ private class WallpaperPresentation(
             initiallySuspended = initiallySuspended,
             bundleId = bundleId,
             allowGeolocation = allowGeolocation,
-            onHeartbeat = { pokeIfVisible(); onHeartbeat() },
+            onHeartbeat = { pokeIfRendering(); onHeartbeat() },
             onLog = { message ->
-                if (message.contains("\"tick\"")) pokeIfVisible()
+                if (message.contains("\"tick\"")) pokeIfRendering()
                 onLog(message)
             },
-            onPageLoaded = { pokeIfVisible() },
+            onPageLoaded = { pokeIfRendering() },
             onRenderProcessGone = ::handleRenderProcessGone,
             onMainFrameLoadFailed = ::handleLoadFailure
         ).apply {
@@ -482,9 +482,11 @@ private class WallpaperPresentation(
         watchdog.start()
     }
 
-    /** Ticks/heartbeats that arrive while hidden are ignored: the watchdog is stopped then. */
-    private fun pokeIfVisible() {
-        if (contentVisible) watchdog.poke()
+    private fun isRenderAllowed() = renderAllowed(contentVisible, pauseWhenHidden, policySuspended)
+
+    /** Ignore ticks/heartbeats exactly when rendering is paused (watchdog stopped); see [renderAllowed]. */
+    private fun pokeIfRendering() {
+        if (isRenderAllowed()) watchdog.poke()
     }
 
     fun load(url: String) {
@@ -542,7 +544,7 @@ private class WallpaperPresentation(
     }
 
     private fun syncVisibilityState(wv: WebView) {
-        val renderAllowed = !policySuspended && (contentVisible || !pauseWhenHidden)
+        val renderAllowed = isRenderAllowed()
         if (contentVisible && !policySuspended) {
             wv.onResume()
             if (renderAllowed) {
