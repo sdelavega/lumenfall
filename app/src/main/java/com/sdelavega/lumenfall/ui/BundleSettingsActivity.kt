@@ -32,6 +32,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import com.sdelavega.lumenfall.R
+import com.sdelavega.lumenfall.importer.BundleFiles
 import com.sdelavega.lumenfall.render.BundleDeletedBus
 import com.sdelavega.lumenfall.render.GeolocationBus
 import com.sdelavega.lumenfall.render.PropertyBus
@@ -710,15 +711,22 @@ class BundleSettingsActivity : AppCompatActivity() {
     }
 
     private fun folderDropdownValues(p: PropertySchema.FolderDropdown): List<String> {
-        val folder = p.folder.trim().trim('/')
-        if (folder.isEmpty()) return emptyList()
+        // Reject `..`/absolute folders up front; imported bundles also get the
+        // canonical-containment check in resolveBundleFolder.
+        val folder = p.folder.trim().trimEnd('/')
+        if (folder.isEmpty() || folder.startsWith("/") || folder.split('/').any { it == ".." }) {
+            return emptyList()
+        }
         val names = if (BundledWallpapers.isBundled(bundleId)) {
             val bundledFolder = BundledWallpapers.folderFor(bundleId) ?: return emptyList()
             runCatching { assets.list("wallpapers/$bundledFolder/$folder")?.toList().orEmpty() }
                 .getOrDefault(emptyList())
         } else {
-            runCatching { store.fileFor(bundleId, folder).list()?.toList().orEmpty() }
-                .getOrDefault(emptyList())
+            // Relative to the LivelyInfo.json directory, like the page's own URLs.
+            val root = store.bundleDir(bundleId)
+            val base = BundleFiles.findLivelyInfo(root)?.let { BundleFiles.metadataBasePath(root, it) } ?: ""
+            val dir = BundleFiles.resolveBundleFolder(root, base, folder) ?: return emptyList()
+            runCatching { dir.list()?.toList().orEmpty() }.getOrDefault(emptyList())
         }
         val extensions = p.extensions
         return names

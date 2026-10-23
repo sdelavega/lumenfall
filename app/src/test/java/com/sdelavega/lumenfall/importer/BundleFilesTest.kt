@@ -125,6 +125,37 @@ class BundleFilesTest {
     }
 
     @Test
+    fun resolvesFolderAgainstTheLivelyInfoDirectory() {
+        val root = temp.newFolder("bundle")
+        root.resolve("Nested/backgrounds").mkdirs()
+
+        val dir = BundleFiles.resolveBundleFolder(root, "Nested", "backgrounds/")
+
+        assertEquals(root.resolve("Nested/backgrounds").canonicalPath, dir!!.canonicalPath)
+        // Root-level bundle: empty base path.
+        root.resolve("sounds").mkdirs()
+        assertEquals(root.resolve("sounds").canonicalPath, BundleFiles.resolveBundleFolder(root, "", "sounds")!!.canonicalPath)
+    }
+
+    @Test
+    fun rejectsFolderEscapes() {
+        val root = temp.newFolder("bundle")
+        root.resolve("Nested").mkdirs()
+        temp.newFolder("outside")
+        for (bad in listOf("..", "../outside", "a/../../outside", "a/..", "..\\outside", "")) {
+            assertEquals("folder '$bad'", null, BundleFiles.resolveBundleFolder(root, "Nested", bad))
+        }
+    }
+
+    @Test
+    fun rejectsAFolderThatIsASymlinkOutOfTheBundle() {
+        val root = temp.newFolder("bundle")
+        val outside = temp.newFolder("outside")
+        java.nio.file.Files.createSymbolicLink(root.resolve("link").toPath(), outside.toPath())
+        assertEquals(null, BundleFiles.resolveBundleFolder(root, "", "link"))
+    }
+
+    @Test
     fun computesMetadataBasePath() {
         val root = temp.newFolder("bundle")
         root.resolve("Nested").mkdirs()

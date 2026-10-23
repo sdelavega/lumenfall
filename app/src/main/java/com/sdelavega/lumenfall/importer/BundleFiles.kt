@@ -111,6 +111,21 @@ object BundleFiles {
             ?.invariantSeparatorsPath
             ?: ""
 
+    /**
+     * The directory a property's `folder` names, resolved against the LivelyInfo
+     * directory ([basePath] under [bundleRoot], as the page itself resolves relative
+     * URLs). Null for an empty, absolute or drive-letter folder, any `..` segment,
+     * or a result (symlinks included) that leaves the bundle.
+     */
+    fun resolveBundleFolder(bundleRoot: File, basePath: String, folder: String): File? {
+        val f = folder.trim()
+        if (f.isEmpty() || f.startsWith("/") || f.startsWith("\\") || Regex("^[A-Za-z]:").containsMatchIn(f)) return null
+        if (f.split('/', '\\').any { it == ".." }) return null
+        val root = bundleRoot.canonicalFile
+        val dir = File(File(root, basePath), f).canonicalFile
+        return dir.takeIf { it.path == root.path || it.path.startsWith(root.path + File.separator) }
+    }
+
     fun fileInventory(dir: File): JSONArray =
         JSONArray().apply {
             dir.walkTopDown()
