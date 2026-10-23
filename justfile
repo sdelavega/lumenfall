@@ -39,6 +39,10 @@ no-home-paths:
 header:
     scripts/check-headers.sh
 
+# Syntax-check the bridge shim asset (skipped without node).
+shim-check:
+    scripts/shim-check.sh
+
 # Build the unsigned repro APK from two copies of the tree and compare them bytewise.
 repro-check:
     scripts/repro-check.sh
