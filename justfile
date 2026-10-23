@@ -34,6 +34,14 @@ assemble-release:
     ./gradlew :app:assembleRelease --console=plain
     scripts/no-home-paths.sh app/build/outputs/apk/release/*.apk
 
+# The debug-only SmokeReceiver must not be in the release merged manifest (run after assemble-release).
+smoke-manifest-check:
+    scripts/smoke-manifest-check.sh
+
+# Device smoke run against the debug build: just smoke [--soak-minutes N] [--skip-install] [--dry-run]
+smoke *flags:
+    scripts/smoke.sh {{flags}}
+
 # Reject developer home paths in tracked files and in the native library, when one has been
 # built (a fresh checkout has none; assemble-release scans the finished APK either way).
 no-home-paths:
@@ -73,7 +81,7 @@ deny:
     "$CARGO" deny check licenses advisories
 
 # Everything CI and a release require, in order.
-gate: no-home-paths header rust-test deny kotlin-test lint shim-check wallpapers-lock assemble-release repro-check
+gate: no-home-paths header rust-test deny kotlin-test lint shim-check wallpapers-lock assemble-release smoke-manifest-check repro-check
 
 # Build the release APK and print its signing certificate's SHA-256, for docs/signing-cert.sha256.
 signing-fingerprint:

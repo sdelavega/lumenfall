@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 Stephen de la Vega -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Debug builds only: scripts/smoke.sh drives the active bundle through this
+     receiver. It must never reach a release build (just smoke-manifest-check). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver
+            android:name=".debug.SmokeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.sdelavega.lumenfall.SMOKE_SET_ACTIVE" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

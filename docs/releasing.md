@@ -64,6 +64,19 @@ the version. Only then does it create the annotated tag `vX.Y.Z`, push it, and
 run `gh release create` with the APK, checksum and notes. The release asset is
 named `Lumenfall-X.Y.Z.apk`, which the F-Droid recipe's `Binaries` URL expects.
 
+## Device smoke run
+
+`just smoke [--soak-minutes N] [--skip-install] [--dry-run]` runs
+`scripts/smoke.sh` against one attached device. It installs the **debug** build
+(the release build has no `SmokeReceiver` and is signed with a different key, so
+the script never installs it), screenshots every bundled wallpaper, prompts for
+the manual checks, soaks, and scans logcat. Output goes to `smoke/<timestamp>/`.
+`just smoke-manifest-check` (part of the gate) proves the release manifest has
+no `SmokeReceiver`.
+
+Final release-APK sanity check, by hand: uninstall Lumenfall, install the
+release APK, set the wallpaper, and look at it.
+
 ## Obtainium
 
 Obtainium users track `https://github.com/sdelavega/lumenfall` and pick up the

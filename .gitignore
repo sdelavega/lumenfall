@@ -32,3 +32,6 @@ captures/
 /.superpowers/
 /dist/
 /.cargo-home/
+
+# Device smoke output
+/smoke/
