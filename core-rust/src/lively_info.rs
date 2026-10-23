@@ -40,7 +40,7 @@ impl LivelyInfoParser {
             homepage: raw.homepage,
             tags: raw.tags.unwrap_or_default(),
             release_date: raw.release_date,
-            version: raw.version,
+            version: raw.version.map(RawVersion::into_string),
             kind: map_kind(raw.wallpaper_type.as_ref()),
             file_name: raw.file_name,
             preview_name: raw.preview,
@@ -65,13 +65,31 @@ struct RawLivelyInfo {
     // AppVersion is the Lively schema version; Version is the bundle's own
     // version string. Both are surfaced so a future picker can show either.
     app_version: Option<String>,
-    version: Option<String>,
+    version: Option<RawVersion>,
     #[serde(rename = "Type", alias = "type")]
     wallpaper_type: Option<RawType>,
     #[serde(alias = "fileName")]
     file_name: Option<String>,
     #[serde(alias = "preview")]
     preview: Option<String>,
+}
+
+/// `Version` is a string in most bundles but a bare number in some (the
+/// vendored ÆtherDesk wallpapers write `"Version": 1`). Accept both.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawVersion {
+    Text(String),
+    Number(serde_json::Number),
+}
+
+impl RawVersion {
+    fn into_string(self) -> String {
+        match self {
+            RawVersion::Text(text) => text,
+            RawVersion::Number(number) => number.to_string(),
+        }
+    }
 }
 
 /// Lively serializes `Type` either as the `WallpaperType` enum *integer*
@@ -141,6 +159,12 @@ mod tests {
         assert_eq!(info.kind, WallpaperKind::Web);
         assert_eq!(info.file_name.as_deref(), Some("index.html"));
         assert_eq!(info.preview_name.as_deref(), Some("preview.gif"));
+    }
+
+    #[test]
+    fn accepts_numeric_version() {
+        let info = LivelyInfoParser::parse(r#"{"Title":"V","Type":1,"Version":1}"#).unwrap();
+        assert_eq!(info.version.as_deref(), Some("1"));
     }
 
     #[test]

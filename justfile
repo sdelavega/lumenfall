@@ -46,3 +46,12 @@ shim-check:
 # Build the unsigned repro APK from two copies of the tree and compare them bytewise.
 repro-check:
     scripts/repro-check.sh
+
+# Re-vendor the ÆtherDesk wallpapers at <ref> (needs AETHERDESK_DIR, an AetherDesk checkout).
+sync-wallpapers ref:
+    @if [ -z "${AETHERDESK_DIR:-}" ]; then echo "error: set AETHERDESK_DIR to an AetherDesk git checkout" >&2; exit 2; fi
+    scripts/sync-aetherdesk-wallpapers.sh "{{ref}}"
+
+# Check the vendored wallpapers against wallpapers.lock.
+wallpapers-lock:
+    ./gradlew :app:testDebugUnitTest --tests '*VendoredWallpapersLockTest*' --console=plain

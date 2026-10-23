@@ -69,3 +69,44 @@ fn validates_bundle_corpus() {
         }
     }
 }
+
+fn list_files(dir: &Path, prefix: &str, out: &mut Vec<FileEntry>) {
+    let mut entries: Vec<_> = fs::read_dir(dir).unwrap().map(|e| e.unwrap()).collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let rel = if prefix.is_empty() {
+            name
+        } else {
+            format!("{prefix}/{name}")
+        };
+        let meta = entry.metadata().unwrap();
+        if meta.is_dir() {
+            list_files(&entry.path(), &rel, out);
+        } else {
+            out.push(FileEntry {
+                path: rel,
+                size: meta.len(),
+            });
+        }
+    }
+}
+
+#[test]
+fn validates_vendored_wallpapers() {
+    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/src/main/assets/wallpapers");
+    for name in ["WeatherAether", "GradientWave", "MatrixRain", "NeonCity"] {
+        let dir = assets.join(name);
+        let info_json = fs::read_to_string(dir.join("LivelyInfo.json")).unwrap();
+        let mut files = Vec::new();
+        list_files(&dir, "", &mut files);
+        let files_json = serde_json::to_string(&files).unwrap();
+
+        let response = BundleValidationResponse::from(
+            BundleValidator::validate(&info_json, "", &files_json)
+                .unwrap_or_else(|error| panic!("{name}: validator failed: {error}")),
+        );
+        assert!(response.ok, "{name}: not admissible: {:?}", response.error);
+        assert_eq!(response.kind, "web", "{name}: kind mismatch");
+    }
+}
