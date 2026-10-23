@@ -5,13 +5,14 @@
 # rust-toolchain.toml pins the compiler and the Android target, which only
 # rustup's cargo/rustc honour; a Homebrew toolchain ahead of them on PATH
 # ignores both (and cargo then finds Homebrew's rustc on PATH too). So export
-# CARGO and RUSTC: the caller's value if set, else rustup's shim if present,
-# else plain `cargo`/`rustc` from PATH. Gradle reads the same variables, and
+# CARGO, RUSTC and RUSTDOC (cargo test runs doctests with the last): the caller's value if set, else rustup's shim if present,
+# else plain `cargo`/`rustc`/`rustdoc` from PATH. Gradle reads the same variables, and
 # PATH itself is not modified.
 
 rustup_bin := env_var('HOME') / ".cargo/bin"
 export CARGO := env_var_or_default('CARGO', if path_exists(rustup_bin / "cargo") == "true" { rustup_bin / "cargo" } else { "cargo" })
 export RUSTC := env_var_or_default('RUSTC', if path_exists(rustup_bin / "rustc") == "true" { rustup_bin / "rustc" } else { "rustc" })
+export RUSTDOC := env_var_or_default('RUSTDOC', if path_exists(rustup_bin / "rustdoc") == "true" { rustup_bin / "rustdoc" } else { "rustdoc" })
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
@@ -27,13 +28,16 @@ rust-test:
 kotlin-test:
     ./gradlew :app:testDebugUnitTest --console=plain
 
-# Release APK (signed with the release key if keystore.properties exists, else the debug key).
+# Release APK (signed with the release key if keystore.properties exists, else the debug key),
+# then reject developer home paths anywhere inside it (native library and dex included).
 assemble-release:
     ./gradlew :app:assembleRelease --console=plain
+    scripts/no-home-paths.sh app/build/outputs/apk/release/*.apk
 
-# Reject developer home paths in tracked files and in the shipped native library.
+# Reject developer home paths in tracked files and in the native library, when one has been
+# built (a fresh checkout has none; assemble-release scans the finished APK either way).
 no-home-paths:
-    scripts/no-home-paths.sh app/build/rustJniLibs/arm64-v8a/liblumenfall_core.so
+    scripts/no-home-paths.sh $(ls app/build/rustJniLibs/arm64-v8a/liblumenfall_core.so 2>/dev/null || true)
 
 # Every owned source file carries the copyright and SPDX header.
 header:
@@ -59,3 +63,23 @@ wallpapers-lock:
 # Regenerate THIRD_PARTY.md and the in-app licences asset from wallpapers + Cargo.lock.
 licenses:
     scripts/gen-licenses.sh
+
+# Android lint on both variants; warnings are errors (see app/build.gradle.kts).
+lint:
+    ./gradlew :app:lintDebug :app:lintRelease --console=plain
+
+# Licence allow-list (deny.toml) and RustSec advisories for the Rust dependencies.
+deny:
+    "$CARGO" deny check licenses advisories
+
+# Everything CI and a release require, in order.
+gate: no-home-paths header rust-test deny kotlin-test lint shim-check wallpapers-lock assemble-release repro-check
+
+# Build the release APK and print its signing certificate's SHA-256, for docs/signing-cert.sha256.
+signing-fingerprint:
+    ./gradlew :app:assembleRelease --console=plain
+    scripts/apk-cert-sha256.sh app/build/outputs/apk/release/*.apk
+
+# Build, verify and optionally publish a release: just release 1.0.0 [--publish]
+release version *flags:
+    scripts/release.sh {{version}} {{flags}}
