@@ -8,7 +8,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-private class FakePrefs(val map: MutableMap<String, Any?> = HashMap()) : SharedPreferences {
+internal class FakePrefs(val map: MutableMap<String, Any?> = HashMap()) : SharedPreferences {
     override fun getAll(): MutableMap<String, *> = map
     override fun getString(key: String, defValue: String?) = map[key] as String? ?: defValue
     override fun getInt(key: String, defValue: Int) = map[key] as Int? ?: defValue
@@ -56,7 +56,7 @@ class PrefKeysTest {
         assertNull(p.map["overrides_a_b"])
         assertNull(p.map["geo_bundle_a_b"])
         assertEquals("a_b", p.getString("active_bundle_id", null))
-        assertEquals(2, p.getInt("prefs_schema", 0))
+        assertEquals(3, p.getInt("prefs_schema", 0))
 
         // Second run: legacy key re-appears but marker stops migration.
         p.map["overrides_zzz"] = "{}"

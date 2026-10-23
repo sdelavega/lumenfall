@@ -1,0 +1,21 @@
+{
+  "base_path": "",
+  "files": [
+    { "path": "LivelyInfo.json", "size": 354 },
+    { "path": "LivelyProperties.json", "size": 881 },
+    { "path": "index.html", "size": 555 },
+    { "path": "rainfall.js", "size": 25622 },
+    { "path": "LICENSE.txt", "size": 123 },
+    { "path": "thumbnail.jpg", "size": 13982 },
+    { "path": "backgrounds/dusk-bokeh.webp", "size": 15934 },
+    { "path": "backgrounds/night-city.webp", "size": 19352 },
+    { "path": "backgrounds/misty-forest.webp", "size": 14326 }
+  ],
+  "expected": {
+    "ok": true,
+    "kind": "web",
+    "entry_path": "index.html",
+    "preview_path": "thumbnail.jpg",
+    "error_contains": null
+  }
+}

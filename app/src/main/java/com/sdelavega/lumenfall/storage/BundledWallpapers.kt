@@ -20,6 +20,14 @@ import java.io.File
  * Property overrides for bundled wallpapers are stored in SharedPreferences
  * (same key scheme as imported bundles), not on disk — there's no bundle dir.
  */
+/**
+ * Maps a stored wallpaper id from a retired bundled wallpaper to its
+ * replacement (`bundled/LivelyRain` became `bundled/Rainfall`); anything else,
+ * including null, is returned unchanged.
+ */
+internal fun migrateBundledId(id: String?): String? =
+    if (id == "bundled/LivelyRain") "bundled/Rainfall" else id
+
 object BundledWallpapers {
     private const val ASSETS_DIR = "wallpapers"
     const val ID_PREFIX = "bundled/"

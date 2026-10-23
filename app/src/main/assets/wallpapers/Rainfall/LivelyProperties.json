@@ -1,0 +1,51 @@
+{
+  "rainIntensity": {
+    "type": "slider",
+    "text": "Rain intensity",
+    "min": 0,
+    "max": 1,
+    "step": 0.05,
+    "value": 0.6
+  },
+  "rainSpeed": {
+    "type": "slider",
+    "text": "Rain speed",
+    "min": 0.2,
+    "max": 3,
+    "step": 0.1,
+    "value": 1
+  },
+  "dropSize": {
+    "type": "slider",
+    "text": "Drop size",
+    "min": 0.5,
+    "max": 2,
+    "step": 0.1,
+    "value": 1
+  },
+  "blur": {
+    "type": "slider",
+    "text": "Background blur",
+    "min": 0,
+    "max": 20,
+    "step": 1,
+    "value": 8
+  },
+  "tint": {
+    "type": "color",
+    "text": "Tint",
+    "value": "#8fb7ff"
+  },
+  "lightning": {
+    "type": "checkbox",
+    "text": "Lightning",
+    "value": false
+  },
+  "background": {
+    "type": "folderDropdown",
+    "text": "Background",
+    "folder": "backgrounds",
+    "filter": "*.webp|*.jpg|*.png",
+    "value": "dusk-bokeh.webp"
+  }
+}

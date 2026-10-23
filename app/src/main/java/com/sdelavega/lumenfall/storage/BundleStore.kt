@@ -251,8 +251,8 @@ class BundleStore(context: Context) : ImportSink {
         const val PROPS_NAME = "properties.json"
         const val OVERRIDES_NAME = "overrides.json"
         const val SCREENING_NAME = "screening.json"
-        private const val KEY_ACTIVE = "active_bundle_id"
-        private const val KEY_PREVIOUS_ACTIVE = "previous_active_bundle_id"
+        internal const val KEY_ACTIVE = "active_bundle_id"
+        internal const val KEY_PREVIOUS_ACTIVE = "previous_active_bundle_id"
     }
 }
 

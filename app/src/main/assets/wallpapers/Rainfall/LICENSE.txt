@@ -1,0 +1,1 @@
+Rainfall — Copyright (C) 2026 Stephen de la Vega — GPL-3.0-or-later; see the LICENSE file in the Lumenfall repository.
