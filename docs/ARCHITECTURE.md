@@ -113,10 +113,20 @@ identically on both hosts):
   `*.local`, metadata hosts, nip.io/sslip.io) are always blocked; bundles
   screened "limited" (or imported before screening existed) also get a
   5-req/min budget on external requests. Main-frame navigation off the bundle
-  origin is refused; `WebSocketGuard` validates WebSocket targets (sockets bypass
-  shouldInterceptRequest): raw IPs are refused, and DNS validation runs on a
-  bounded executor (8 in flight, extras rejected) with a 5 s DNS cache. That cache
-  leaves a documented time-of-check window for DNS rebinding. Local asset-loader traffic is never filtered.
+  origin is refused. `NativeFetchBridge` (the CORS-bypassing fetch/XHR proxy)
+  follows at most 5 redirects by hand and, on every hop, runs the bundle's policy
+  and vets the resolved addresses (`web/FetchGuard`: loopback, private, ULA,
+  link-local, metadata and IPv4-mapped forms are refused; private ranges only with
+  "allow LAN", metadata and link-local never). `WebSocketGuard` validates
+  WebSocket targets (sockets bypass shouldInterceptRequest) with the same policy
+  and address vetting, failing closed on DNS errors; raw IPs are refused by the
+  shim, and DNS validation runs on a bounded executor (8 in flight, extras
+  rejected) with a 5 s DNS cache. The shim wraps classic `Worker`s so the same
+  guard runs inside them; module workers and `SharedWorker` throw. Both guards
+  are best-effort: `HttpURLConnection` and the real socket resolve again at
+  connect time (pinning the address would break SNI/certificate checks), which
+  leaves a documented time-of-check window for DNS rebinding. Local asset-loader
+  traffic is never filtered.
 
 Settings UI (DONE, 2026-07-03):
 
@@ -294,9 +304,9 @@ last of the three porting recommendations):
   Settings entry point too — the screen carries the live preview and this
   readout, so it's no longer property-gated. Deleting a bundle clears its
   ledger entry.
-- Known gap, shared with ÆtherDesk: WebSocket connections to FQDNs bypass
-  `shouldInterceptRequest` (Android offers no hook), so they don't land in
-  the ledger; raw-IP sockets are refused by the shim outright.
+- `fetch`/XHR hops (each redirect included) and validated WebSocket hosts are
+  recorded too, by `NativeFetchBridge` and `WebSocketGuard`; page loads by
+  `shouldInterceptRequest`. Raw-IP sockets are refused by the shim outright.
 
 The Android runtime should not try to share Swift code with ÆtherDesk. The
 portable contract is the data shape: Lively metadata, property definitions,

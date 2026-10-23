@@ -125,11 +125,11 @@ object BundleWebView {
             )
             addJavascriptInterface(geoBridge, "aetherDeskGeo")
             geoBridges[this] = geoBridge
-            // WebSocket DNS-rebinding guard: always registered for every web
-            // bundle. Android's shouldInterceptRequest can't reach WebSocket
-            // connections, so without this a hostname resolving to a private/
-            // metadata IP would bypass the network policy entirely.
-            addJavascriptInterface(WebSocketGuard(this), "aetherDeskWebSocket")
+            // WebSocket guard: always registered for every web bundle. Android's
+            // shouldInterceptRequest can't reach WebSocket connections, so the
+            // shim asks this guard to apply the bundle's network policy and the
+            // DNS check before it opens a socket (best-effort, see the class KDoc).
+            addJavascriptInterface(WebSocketGuard(this, networkPolicy, bundleId), "aetherDeskWebSocket")
             // Native fetch proxy: routes external fetch()/XHR through native
             // HttpURLConnection, bypassing the WebView's CORS enforcement so
             // bundles can reach external APIs (weather, geocoding). Same

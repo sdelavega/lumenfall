@@ -140,3 +140,23 @@ internal fun <R> followVetted(
         }
     }
 }
+
+/**
+ * Reject reason for opening a WebSocket to [host], or null. Applies the bundle's
+ * network policy first ([decideHost]: blocklist, block-all, budget, LAN toggle), then
+ * resolves and vets every address. A DNS failure rejects: the guard fails closed.
+ */
+internal fun webSocketRejection(
+    host: String,
+    decideHost: (String) -> String?,
+    resolve: (String) -> List<InetAddress>,
+    allowLan: () -> Boolean
+): String? {
+    decideHost(host)?.let { return it }
+    val addrs = try {
+        resolve(host)
+    } catch (e: Exception) {
+        return "DNS failure for $host"
+    }
+    return vetAddresses(addrs, allowLan())
+}

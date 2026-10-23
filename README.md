@@ -63,7 +63,10 @@ licence.
   settings screen ("Domains contacted").
 - Known ad, analytics and crypto-miner hosts, raw IP addresses, local addresses
   (unless you allow them) and the location services `ipapi.co` and
-  `api.bigdatacloud.net` are blocked for every wallpaper.
+  `api.bigdatacloud.net` are blocked for every wallpaper. This covers requests a
+  wallpaper makes through `fetch`, XHR and page loads. WebSocket connections are
+  checked the same way on a best-effort basis (the check and the connection look
+  the name up separately), and web workers are wrapped or refused.
 - Imported bundles are screened when you import them; ones that use trackers,
   miners or other unsafe patterns are rejected.
 - Weather Aether contacts only Open-Meteo: `api.open-meteo.com` (forecast) and

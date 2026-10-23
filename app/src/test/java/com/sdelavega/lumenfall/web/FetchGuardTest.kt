@@ -194,4 +194,51 @@ class FetchGuardTest {
         h.run("https://a.example/")
         assertEquals(listOf("a.example"), h.logged)
     }
+
+    // --- webSocketRejection -------------------------------------------------
+
+    private fun wsReason(
+        host: String,
+        policy: WallpaperNetworkPolicy = policy(),
+        resolve: (String) -> List<InetAddress> = { listOf(pub) },
+        allowLan: Boolean = false
+    ) = webSocketRejection(
+        host,
+        decideHost = { (policy.decideHost(it) as? WallpaperNetworkPolicy.Verdict.Block)?.reason },
+        resolve = resolve,
+        allowLan = { allowLan }
+    )
+
+    @Test fun webSocketPublicHostAllowed() {
+        assertNull(wsReason("socket.example"))
+    }
+
+    @Test fun webSocketPolicyRunsBeforeDns() {
+        var resolved = false
+        val r = wsReason("ipapi.co", resolve = { resolved = true; listOf(pub) })
+        assertNotNull(r)
+        assertEquals(false, resolved)
+    }
+
+    @Test fun webSocketHonoursBlockAllExternal() {
+        val p = WallpaperNetworkPolicy(blocklist = blocklist, blockAllExternal = true)
+        assertNotNull(wsReason("socket.example", policy = p))
+    }
+
+    @Test fun webSocketSpendsTheBudget() {
+        val p = WallpaperNetworkPolicy(blocklist = blocklist, budgetPerMinute = 1, now = { 0L })
+        assertNull(wsReason("a.example", policy = p))
+        assertNotNull(wsReason("b.example", policy = p))
+    }
+
+    @Test fun webSocketDnsFailureFailsClosed() {
+        assertNotNull(wsReason("socket.example", resolve = { throw java.net.UnknownHostException("x") }))
+    }
+
+    @Test fun webSocketResolvingToPrivateIsRejectedUnlessLan() {
+        val lan = { _: String -> listOf(ip("192.168.1.10")) }
+        assertNotNull(wsReason("socket.example", resolve = lan))
+        assertNull(wsReason("socket.example", resolve = lan, allowLan = true))
+        assertNotNull(wsReason("socket.example", resolve = { listOf(ip("169.254.169.254")) }, allowLan = true))
+    }
 }

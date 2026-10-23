@@ -145,23 +145,30 @@
     return 0;
   };
 
-  // --- WebSocket: raw-IP block (shim) + DNS-rebinding validation (native) ---
-  // Android's shouldInterceptRequest doesn't cover WebSocket, so the
-  // network policy can't reach sockets. The shim rejects raw-IP literals
-  // synchronously (no DNS round-trip needed); FQDN sockets go through a
-  // BridgeWebSocket proxy that asks the native guard to resolve the
-  // host and reject any resolved IP that's private/loopback/metadata
-  // (DNS rebinding). The real socket is created only after validation
-  // passes; sends are queued until then.
-  var _OrigWS = window.WebSocket;
-  if (typeof _OrigWS === 'function') {
+  // --- WebSocket: raw-IP block (shim) + native validation ------------------
+  // Android's shouldInterceptRequest doesn't cover WebSocket, so the network
+  // policy can't reach sockets. The shim rejects raw-IP literals
+  // synchronously; every other socket goes through a BridgeWebSocket proxy
+  // that asks the native guard to apply the bundle's network policy
+  // (blocklist, block-all, budget) and to resolve the host and reject any
+  // private/loopback/metadata address (DNS rebinding). The real socket is
+  // created only after validation passes; sends are queued until then.
+  // This is best-effort: native resolves again when the socket connects.
+  //
+  // _lfInstallWSGuard is self-contained on purpose: its source is embedded
+  // into the prelude of every Worker (see BridgeWorker below), where it runs
+  // with a `validate` that asks the owning page instead of native, so a
+  // worker cannot reach an unguarded WebSocket.
+  function _lfInstallWSGuard(scope, validate) {
+    var OrigWS = scope.WebSocket;
+    if (typeof OrigWS !== 'function') return null;
     var RAW_IP = /^wss?:\/\/(\[|\d{1,3}(\.\d{1,3}){3}([\/:]|$))/i;
-    var _pendingWS = {};
-    var _wsId = 0;
+    var pending = {};
+    var seq = 0;
 
-    function _wsFail(ws, msg) {
+    function fail(ws, msg) {
       ws.readyState = 3; // CLOSED
-      try { if (ws.onerror) ws.onerror({ message: msg, type: 'error' }); } catch(e) {}
+      try { if (ws.onerror) ws.onerror({ message: msg, type: 'error' }); } catch (e) {}
     }
 
     function BridgeWebSocket(url, protocols) {
@@ -180,21 +187,18 @@
       this.onerror = null;
       this.binaryType = 'blob';
 
+      var self = this;
       if (RAW_IP.test(String(url))) {
-        var self = this;
-        setTimeout(function() { _wsFail(self, 'WebSocket to raw IP blocked'); }, 0);
+        setTimeout(function () { fail(self, 'WebSocket to raw IP blocked'); }, 0);
         return;
       }
-
-      var id = ++_wsId;
-      this._id = id;
-      _pendingWS[id] = this;
+      var id = ++seq;
+      pending[id] = this;
       try {
-        window.aetherDeskWebSocket.validate(String(id), String(url));
-      } catch(e) {
-        delete _pendingWS[id];
-        var s = this;
-        setTimeout(function() { _wsFail(s, 'WebSocket bridge unavailable'); }, 0);
+        validate(id, String(url));
+      } catch (e) {
+        delete pending[id];
+        setTimeout(function () { fail(self, 'WebSocket bridge unavailable'); }, 0);
       }
     }
 
@@ -203,7 +207,7 @@
     BridgeWebSocket.CLOSING = 2;
     BridgeWebSocket.CLOSED = 3;
 
-    BridgeWebSocket.prototype.send = function(data) {
+    BridgeWebSocket.prototype.send = function (data) {
       if (this._real) {
         this._real.send(data);
       } else if (this.readyState === 0) {
@@ -213,52 +217,122 @@
       }
     };
 
-    BridgeWebSocket.prototype.close = function(code, reason) {
+    BridgeWebSocket.prototype.close = function (code, reason) {
       if (this._real) this._real.close(code, reason);
       this.readyState = 2; // CLOSING
     };
 
-    window.aetherDesk._wsValidated = function(id, allowed) {
-      var ws = _pendingWS[id];
+    function onValidated(id, allowed) {
+      var ws = pending[id];
       if (!ws) return;
-      delete _pendingWS[id];
+      delete pending[id];
       if (!allowed) {
-        _wsFail(ws, 'WebSocket rejected by policy (DNS rebinding blocked)');
+        fail(ws, 'WebSocket rejected by policy');
         return;
       }
       var real;
       try {
         real = (ws._protocols !== undefined)
-          ? new _OrigWS(ws._url, ws._protocols)
-          : new _OrigWS(ws._url);
-      } catch(e) {
-        _wsFail(ws, String(e && e.message || e));
+          ? new OrigWS(ws._url, ws._protocols)
+          : new OrigWS(ws._url);
+      } catch (e) {
+        fail(ws, String(e && e.message || e));
         return;
       }
       ws._real = real;
-      real.onopen = function(e) {
+      real.onopen = function (e) {
         ws.readyState = 1;
         ws.protocol = real.protocol;
         if (ws.onopen) ws.onopen(e);
       };
-      real.onmessage = function(e) { if (ws.onmessage) ws.onmessage(e); };
-      real.onclose = function(e) {
+      real.onmessage = function (e) { if (ws.onmessage) ws.onmessage(e); };
+      real.onclose = function (e) {
         ws.readyState = 3;
         if (ws.onclose) ws.onclose(e);
       };
-      real.onerror = function(e) {
+      real.onerror = function (e) {
         ws.readyState = 3;
         if (ws.onerror) ws.onerror(e);
       };
       for (var i = 0; i < ws._sendQueue.length; i++) real.send(ws._sendQueue[i]);
       ws._sendQueue.length = 0;
-    };
+    }
 
-    window.WebSocket = BridgeWebSocket;
-    window.WebSocket.prototype = BridgeWebSocket.prototype;
-    ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'].forEach(function(k) {
-      window.WebSocket[k] = BridgeWebSocket[k];
-    });
+    scope.WebSocket = BridgeWebSocket;
+    return onValidated;
+  }
+
+  var _pageWSValidated = _lfInstallWSGuard(window, function (id, url) {
+    window.aetherDeskWebSocket.validate(String(id), String(url));
+  });
+  var _workerWS = {}; // page-side id -> { worker, id (the worker's own id) }
+  var _workerWSSeq = 0;
+  window.aetherDesk._wsValidated = function (id, allowed) {
+    // Ids from _workerWS are negative so they never collide with the page's own.
+    var w = _workerWS[id];
+    if (w) {
+      delete _workerWS[id];
+      try { w.worker.postMessage({ __lfws: 'result', id: w.id, allowed: !!allowed }); } catch (e) {}
+      return;
+    }
+    if (_pageWSValidated) _pageWSValidated(id, allowed);
+  };
+
+  // --- Workers --------------------------------------------------------------
+  // A Worker is a separate realm that would get an unguarded WebSocket (and
+  // never run this shim). Classic workers are therefore started from a blob
+  // that first installs the same WebSocket guard (validation is relayed to
+  // the page, which asks native) and then importScripts() the original URL.
+  // Module workers and SharedWorker cannot be wrapped this way and throw.
+  // Limits: inside a worker fetch()/XHR are not proxied (they keep the
+  // WebView's CORS rules and shouldInterceptRequest policy), and relative URLs
+  // in worker code resolve against the blob URL.
+  var _OrigWorker = window.Worker;
+  if (typeof _OrigWorker === 'function') {
+    var _workerPrelude =
+      '(function(){' +
+      'var guard=(' + _lfInstallWSGuard.toString() + ')(self,function(id,url){' +
+      'self.postMessage({__lfws:"validate",id:id,url:url});});' +
+      'self.addEventListener("message",function(e){var d=e.data;' +
+      'if(d&&d.__lfws==="result"){e.stopImmediatePropagation();if(guard)guard(d.id,d.allowed);}});' +
+      'var nope=function(){throw new Error("Workers cannot be nested in a Lumenfall wallpaper");};' +
+      'self.Worker=nope;self.SharedWorker=nope;' +
+      '})();\n';
+
+    var BridgeWorker = function (url, options) {
+      if (!(this instanceof BridgeWorker)) throw new TypeError("Failed to construct 'Worker': Please use the 'new' operator.");
+      if (options && options.type === 'module') {
+        throw new Error('Module workers are not supported in a Lumenfall wallpaper');
+      }
+      var abs = new URL(String(url), document.baseURI).href;
+      var blob = new Blob([_workerPrelude + 'importScripts(' + JSON.stringify(abs) + ');'],
+        { type: 'text/javascript' });
+      var blobUrl = URL.createObjectURL(blob);
+      var worker = new _OrigWorker(blobUrl, options);
+      // Registered before any page listener, so it sees guard traffic first and
+      // keeps it away from the wallpaper's own onmessage handlers.
+      worker.addEventListener('message', function (e) {
+        var d = e.data;
+        if (!d || d.__lfws !== 'validate') return;
+        e.stopImmediatePropagation();
+        var gid = -(++_workerWSSeq);
+        _workerWS[gid] = { worker: worker, id: d.id };
+        try {
+          window.aetherDeskWebSocket.validate(String(gid), String(d.url));
+        } catch (err) {
+          delete _workerWS[gid];
+          worker.postMessage({ __lfws: 'result', id: d.id, allowed: false });
+        }
+      });
+      return worker;
+    };
+    BridgeWorker.prototype = _OrigWorker.prototype;
+    window.Worker = BridgeWorker;
+  }
+  if (typeof window.SharedWorker === 'function') {
+    window.SharedWorker = function () {
+      throw new Error('SharedWorker is not supported in a Lumenfall wallpaper');
+    };
   }
 
   // --- Native fetch/XHR proxy -------------------------------------------

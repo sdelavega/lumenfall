@@ -15,25 +15,29 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
 /**
- * Validates WebSocket connection URLs before the real socket is created,
- * closing the DNS-rebinding gap that [WallpaperNetworkPolicy] can't reach
- * (Android's `shouldInterceptRequest` doesn't cover WebSocket connections).
+ * Validates WebSocket connection URLs before the real socket is created. Android's
+ * `shouldInterceptRequest` doesn't cover WebSocket connections, so this is the only
+ * policy point for sockets.
  *
- * The shim's `BridgeWebSocket` proxy calls [validate] with a callId + URL;
- * native resolves the host off-thread, checks every resolved IP against the
- * same private/metadata ranges [WallpaperNetworkPolicy] uses for subresource
- * loads, and calls back `window.aetherDesk._wsValidated(callId, allowed)` via
- * `evaluateJavascript`. The shim creates the real `WebSocket` only on
- * `allowed=true`; otherwise it fires `onerror` and sets `readyState=CLOSED`.
+ * The shim's `BridgeWebSocket` proxy (in the page, and in every classic Worker via
+ * the shim's worker prelude) calls [validate] with a callId + URL. Native then, off
+ * the main thread: applies the bundle's [WallpaperNetworkPolicy] to the host
+ * (blocklist, "Block external network requests", LAN toggle, the limited-bundle
+ * budget), resolves the host and vets every address with [vetAddresses] (private,
+ * loopback, link-local, metadata; private ranges only when LAN is allowed), and
+ * calls back `window.aetherDesk._wsValidated(callId, allowed)`. DNS failure
+ * rejects. The shim creates the real `WebSocket` only on `allowed=true`.
+ * Validated hosts are recorded in [ContactedDomains].
  *
- * Raw-IP literals are still rejected in the shim itself (synchronous, no DNS
- * round-trip needed); this guard handles the FQDN case where a benign-looking
- * hostname resolves to a private/metadata address.
- *
- * Always registered for every web bundle — this is a security defense, not a
- * user preference. Ported from ÆtherDesk's `WebWallpaperRuntime.validateWebSocket`.
+ * This is best-effort: validation and the real connect are separate DNS lookups
+ * (see [dnsCache]), so a DNS-rebinding attacker keeps a short window, and module
+ * workers/SharedWorker are refused rather than wrapped.
  */
-class WebSocketGuard(webView: WebView, private val blocklist: Blocklist = Blocklist.shared) {
+class WebSocketGuard(
+    webView: WebView,
+    private val networkPolicy: WallpaperNetworkPolicy,
+    private val bundleId: String? = null
+) {
     private val webViewRef = WeakReference(webView)
     private val main = Handler(Looper.getMainLooper())
 
@@ -80,41 +84,17 @@ class WebSocketGuard(webView: WebView, private val blocklist: Blocklist = Blockl
 
     private fun isAllowed(url: String): Boolean {
         val host = android.net.Uri.parse(url).host?.lowercase() ?: return false
-
-        // Raw-IP literals are already rejected in the shim, but double-check
-        // here in case a future caller bypasses it.
-        if (isRawIp(host)) return false
-
-        // Shared blocklist (trackers, metadata, mDNS, DNS-rebinding services).
-        if (blocklist.blocks(host)) return false
-
-        // Resolve and check every resolved address. If ANY resolved IP is
-        // private/loopback/metadata, reject — this is the DNS-rebinding defense.
-        // A hostname that resolves to both a public and a private IP is still
-        // rejected (defense in depth; the attacker could connect to the
-        // private one).
-        return try {
-            val addresses = dnsCache.lookup(host)
-            addresses.none { isDisallowedIp(it) }
-        } catch (e: Exception) {
-            // DNS resolution failed — allow the WebSocket to proceed; the real
-            // socket will fail on its own. Rejecting here would block
-            // legitimately-unreachable hosts (e.g. during a network glitch),
-            // which isn't a security concern.
-            true
+        val reason = webSocketRejection(
+            host = host,
+            decideHost = { (networkPolicy.decideHost(it) as? WallpaperNetworkPolicy.Verdict.Block)?.reason },
+            resolve = { dnsCache.lookup(it) },
+            allowLan = { networkPolicy.lanAllowed }
+        )
+        if (reason != null) {
+            Log.w(TAG, "WebSocket to $host rejected: $reason")
+            return false
         }
-    }
-
-    private fun isRawIp(host: String): Boolean {
-        if (host.startsWith("[") || host.contains(":")) return true
-        return host.matches(Regex("""\d{1,3}(\.\d{1,3}){3}"""))
-    }
-
-    private fun isDisallowedIp(addr: InetAddress): Boolean {
-        if (addr.isLoopbackAddress) return true
-        if (addr.isSiteLocalAddress) return true // 10.x, 172.16-31.x, 192.168.x
-        if (addr.isLinkLocalAddress) return true // 169.254.x (includes metadata)
-        if (addr.isAnyLocalAddress) return true // 0.0.0.0
-        return false
+        bundleId?.let { ContactedDomains.log(it, host) }
+        return true
     }
 }

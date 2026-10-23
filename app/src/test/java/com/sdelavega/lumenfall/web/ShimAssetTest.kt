@@ -44,4 +44,13 @@ class ShimAssetTest {
         assertTrue(shim.contains("reportWeatherRendererStatus"))
         assertTrue(shim.contains("messageHandlers"))
     }
+
+    @Test
+    fun workersAreWrappedOrRefused() {
+        assertTrue(shim.contains("window.Worker = BridgeWorker"))
+        assertTrue(shim.contains("importScripts("))
+        assertTrue(shim.contains("_lfInstallWSGuard.toString()"))
+        assertTrue(shim.contains("Module workers are not supported"))
+        assertTrue(shim.contains("SharedWorker is not supported"))
+    }
 }
