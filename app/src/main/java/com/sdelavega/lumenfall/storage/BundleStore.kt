@@ -4,7 +4,10 @@ package com.sdelavega.lumenfall.storage
 
 import android.content.Context
 import org.json.JSONObject
+import com.sdelavega.lumenfall.core.LumenfallCore
+import com.sdelavega.lumenfall.render.BundleDeletedBus
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Metadata for one imported wallpaper bundle. The actual bundle files live in
@@ -48,6 +51,10 @@ data class BundleMeta(
     }
 }
 
+/** Parse a stored overrides blob; null, corrupt, or non-object text yields an empty object. */
+internal fun parseOverrides(text: String?): JSONObject =
+    if (text == null) JSONObject() else runCatching { JSONObject(text) }.getOrDefault(JSONObject())
+
 private fun JSONObject.stringOrNull(key: String): String? =
     if (!has(key) || isNull(key)) null else optString(key)
 
@@ -60,6 +67,11 @@ class BundleStore(context: Context) {
     private val app = context.applicationContext
     val bundlesDir: File = File(app.filesDir, "bundles").apply { mkdirs() }
     private val prefs = app.getSharedPreferences("lumenfall", Context.MODE_PRIVATE)
+    private val schemaCache = ConcurrentHashMap<String, PropertyParseResult>()
+
+    init {
+        PrefKeys.migrate(prefs)
+    }
 
     fun bundleDir(id: String) = File(bundlesDir, id)
     private fun metaFile(id: String) = File(bundleDir(id), META_NAME)
@@ -82,9 +94,11 @@ class BundleStore(context: Context) {
     fun delete(id: String) {
         if (BundledWallpapers.isBundled(id)) return // can't delete a bundled wallpaper
         bundleDir(id).deleteRecursively()
-        prefs.edit().remove(geoKey(id)).apply()
+        schemaCache.remove(id)
+        prefs.edit().remove(PrefKeys.geolocation(id)).remove(PrefKeys.overrides(id)).apply()
         if (activeId == id) activeId = null
         if (previousActiveId == id) previousActiveId = null
+        BundleDeletedBus.notifyDeleted(id)
     }
 
     var activeId: String?
@@ -113,8 +127,28 @@ class BundleStore(context: Context) {
     private fun overridesFile(id: String) = File(bundleDir(id), OVERRIDES_NAME)
 
     /** Persist the Rust `parseLivelyProperties` envelope for later reads. */
-    fun savePropertiesEnvelope(id: String, envelope: String) = propsFile(id).writeText(envelope)
+    fun savePropertiesEnvelope(id: String, envelope: String) {
+        propsFile(id).writeText(envelope)
+        schemaCache.remove(id)
+    }
 
+    /** Typed property schema for a bundle, parsed once and cached until import or delete. */
+    fun propertySchema(id: String): PropertyParseResult =
+        schemaCache.getOrPut(id) { loadPropertySchema(id) }
+
+    private fun loadPropertySchema(id: String): PropertyParseResult = try {
+        val envelope = if (BundledWallpapers.isBundled(id)) {
+            BundledWallpapers.propertiesEnvelope(app, id)?.let { LumenfallCore.parseLivelyProperties(it) }
+        } else {
+            propsFile(id).takeIf { it.isFile }?.readText()
+        }
+        if (envelope == null) PropertyParseResult.Ok(emptyList())
+        else PropertySchemaParser.parseEnvelope(envelope)
+    } catch (e: Exception) {
+        PropertyParseResult.Failed(e.message ?: e.javaClass.simpleName)
+    }
+
+    @Deprecated("Task 11 removes this; use propertySchema")
     fun properties(id: String): List<BundleProperty> =
         if (BundledWallpapers.isBundled(id)) {
             // Bundled wallpapers: parse from assets via Rust, cached per call.
@@ -132,20 +166,18 @@ class BundleStore(context: Context) {
         if (BundledWallpapers.isBundled(id)) {
             // Overrides for bundled wallpapers live in SharedPreferences only
             // (there's no on-disk overrides.json).
-            prefs.getString("overrides_$id", null)?.let { JSONObject(it) } ?: JSONObject()
+            parseOverrides(prefs.getString(PrefKeys.overrides(id), null))
         } else {
-            runCatching { JSONObject(overridesFile(id).readText()) }.getOrDefault(JSONObject())
+            parseOverrides(runCatching { overridesFile(id).readText() }.getOrNull())
         }
 
     /** Set (or clear, when [value] is null) one user override and persist it. */
     fun setOverride(id: String, key: String, value: Any?) {
+        val o = overrides(id)
+        if (value == null) o.remove(key) else o.put(key, value)
         if (BundledWallpapers.isBundled(id)) {
-            val o = overrides(id)
-            if (value == null) o.remove(key) else o.put(key, value)
-            prefs.edit().putString("overrides_$id", o.toString()).apply()
+            prefs.edit().putString(PrefKeys.overrides(id), o.toString()).apply()
         } else {
-            val o = overrides(id)
-            if (value == null) o.remove(key) else o.put(key, value)
             overridesFile(id).writeText(o.toString())
         }
     }
@@ -153,10 +185,10 @@ class BundleStore(context: Context) {
     /** Property defaults overlaid with user overrides — what the bridge gets. */
     fun effectiveValues(id: String): JSONObject {
         val out = JSONObject()
-        val props = properties(id)
+        val props = (propertySchema(id) as? PropertyParseResult.Ok)?.properties ?: emptyList()
         val ov = overrides(id)
         props.forEach { p ->
-            val value = if (ov.has(p.key)) ov.opt(p.key) else p.defaultValue
+            val value = if (ov.has(p.key)) ov.opt(p.key) else defaultOf(p)
             if (value != null) out.put(p.key, bridgeValue(p, value))
         }
         ov.keys().forEach { k ->
@@ -165,11 +197,19 @@ class BundleStore(context: Context) {
         return out
     }
 
-    private fun bridgeValue(property: BundleProperty, value: Any): Any {
-        if (!property.type.equals("folderDropdown", ignoreCase = true) || value !is String) {
-            return value
-        }
-        val folder = property.raw.optString("folder").trim().trim('/')
+    private fun defaultOf(p: PropertySchema): Any? = when (p) {
+        is PropertySchema.Slider -> p.default
+        is PropertySchema.Color -> p.default
+        is PropertySchema.Checkbox -> p.default
+        is PropertySchema.Dropdown -> p.defaultIndex
+        is PropertySchema.FolderDropdown -> p.default.takeIf { it.isNotEmpty() }
+        is PropertySchema.Text -> p.default
+        is PropertySchema.Button, is PropertySchema.Label -> null
+    }
+
+    private fun bridgeValue(property: PropertySchema, value: Any): Any {
+        if (property !is PropertySchema.FolderDropdown || value !is String) return value
+        val folder = property.folder.trim().trim('/')
         if (folder.isEmpty() || value.contains("/") || value.startsWith("blob:") ||
             value.startsWith("data:") || value.startsWith("http://") || value.startsWith("https://")
         ) {
@@ -210,12 +250,10 @@ class BundleStore(context: Context) {
      * a "limited" bundle can't use geolocation even with this on, so the
      * settings UI doesn't surface the toggle for those bundles.
      */
-    fun geolocationEnabled(id: String): Boolean = prefs.getBoolean(geoKey(id), false)
+    fun geolocationEnabled(id: String): Boolean = prefs.getBoolean(PrefKeys.geolocation(id), false)
 
     fun setGeolocationEnabled(id: String, enabled: Boolean) =
-        prefs.edit().putBoolean(geoKey(id), enabled).apply()
-
-    private fun geoKey(id: String) = "${KEY_GEO_PREFIX}$id"
+        prefs.edit().putBoolean(PrefKeys.geolocation(id), enabled).apply()
 
     companion object {
         const val META_NAME = "bundle.json"
@@ -224,7 +262,6 @@ class BundleStore(context: Context) {
         const val SCREENING_NAME = "screening.json"
         private const val KEY_ACTIVE = "active_bundle_id"
         private const val KEY_PREVIOUS_ACTIVE = "previous_active_bundle_id"
-        private const val KEY_GEO_PREFIX = "geo_bundle_"
     }
 }
 
