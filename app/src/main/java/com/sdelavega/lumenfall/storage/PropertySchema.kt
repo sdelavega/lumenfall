@@ -64,8 +64,8 @@ object PropertySchemaParser {
         val def: Any? = if (p.isNull("default_value")) null else p.opt("default_value")
         return when (p.optString("property_type", "").lowercase()) {
             "slider" -> {
-                var min = if (raw.has("min")) raw.optDouble("min", 0.0) else 0.0
-                var max = if (raw.has("max")) raw.optDouble("max", 100.0) else 100.0
+                var min = raw.optDouble("min", 0.0)
+                var max = raw.optDouble("max", 100.0)
                 if (min > max) { val t = min; min = max; max = t }
                 val step = raw.optDouble("step", 1.0).let { if (it > 0.0) it else 1.0 }
                 PropertySchema.Slider(key, label, min, max, step, (def as? Number)?.toDouble() ?: min)
@@ -78,8 +78,15 @@ object PropertySchemaParser {
                     fallback(key, label, def)
                 } else {
                     val items = (0 until itemsArr.length()).map { itemsArr.optString(it) }
-                    val idx = (def as? Number)?.toInt() ?: 0
-                    PropertySchema.Dropdown(key, label, items, if (idx in items.indices) idx else 0)
+                    // Mirrors the legacy settings consumer: a number is the index, a string is
+                    // looked up in items, and the result is clamped to [0, lastIndex] (a
+                    // string not found, a negative index, or an empty list all yield 0).
+                    val rawIndex = when (def) {
+                        is Number -> def.toInt()
+                        is String -> items.indexOf(def)
+                        else -> 0
+                    }
+                    PropertySchema.Dropdown(key, label, items, rawIndex.coerceIn(0, maxOf(0, items.size - 1)))
                 }
             }
             "folderdropdown" -> PropertySchema.FolderDropdown(

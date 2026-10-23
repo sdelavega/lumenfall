@@ -42,7 +42,7 @@ class PropertySchemaTest {
     @Test fun dropdownItemsAndDefaultIndex() {
         val s = parse(
             prop("d", "dropdown", "1", """{"items":["x","y","z"]}"""),
-            prop("e", "dropdown", "9", """{"items":["x","y"]}""")
+            prop("e", "dropdown", "-1", """{"items":["x","y"]}""")
         )
         assertEquals(PropertySchema.Dropdown("d", "Label d", listOf("x", "y", "z"), 1), s[0])
         assertEquals(PropertySchema.Dropdown("e", "Label e", listOf("x", "y"), 0), s[1])
@@ -99,5 +99,34 @@ class PropertySchemaTest {
             ),
             s
         )
+    }
+
+    @Test fun dropdownStringDefaultResolvesToIndex() {
+        val s = parse(
+            prop("d", "dropdown", "\"High\"", """{"items":["Low","High"]}"""),
+            prop("e", "dropdown", "\"Nope\"", """{"items":["Low","High"]}""")
+        )
+        assertEquals(PropertySchema.Dropdown("d", "Label d", listOf("Low", "High"), 1), s[0])
+        assertEquals(PropertySchema.Dropdown("e", "Label e", listOf("Low", "High"), 0), s[1])
+    }
+
+    @Test fun dropdownOutOfRangeMatchesLegacyBehaviour() {
+        val s = parse(
+            prop("hi", "dropdown", "9", """{"items":["x","y","z"]}"""),
+            prop("lo", "dropdown", "-3", """{"items":["x","y","z"]}"""),
+            prop("empty", "dropdown", "4", """{"items":[]}""")
+        )
+        assertEquals(2, (s[0] as PropertySchema.Dropdown).defaultIndex)
+        assertEquals(0, (s[1] as PropertySchema.Dropdown).defaultIndex)
+        assertEquals(0, (s[2] as PropertySchema.Dropdown).defaultIndex)
+    }
+
+    @Test fun typeMatchingIsCaseInsensitive() {
+        val s = parse(
+            prop("f", "FolderDropdown", "\"a.png\"", """{"folder":"i","filter":"*.png"}"""),
+            prop("s", "Slider", "1", "{}")
+        )
+        assertTrue(s[0] is PropertySchema.FolderDropdown)
+        assertTrue(s[1] is PropertySchema.Slider)
     }
 }
