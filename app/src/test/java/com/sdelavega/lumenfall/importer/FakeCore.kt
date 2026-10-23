@@ -21,6 +21,7 @@ class FakeCore(
         onValidate()
         return validation
     }
+    override fun blocklistJson(): String = """{"domains":[],"hosts":[],"suffixes":[]}"""
     override fun screenBundle(scriptSource: String): String {
         lastScreenedSource = scriptSource
         return screening

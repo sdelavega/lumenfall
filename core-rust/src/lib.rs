@@ -1,10 +1,12 @@
 // Copyright (C) 2026 Stephen de la Vega
 // SPDX-License-Identifier: GPL-3.0-or-later
+mod blocklist;
 mod bundle_screening;
 mod bundle_validation;
 mod lively_info;
 mod lively_properties;
 
+pub use blocklist::{is_blocked_host, blocklist_json};
 pub use bundle_screening::{BundleScreener, Classification, ScreeningReport, ScreeningResponse};
 pub use bundle_validation::{BundleValidation, BundleValidationResponse, BundleValidator};
 pub use lively_info::{LivelyInfo, LivelyInfoParser, WallpaperKind};
@@ -95,6 +97,16 @@ pub extern "system" fn Java_com_sdelavega_lumenfall_core_LumenfallCore_screenBun
         .unwrap_or_else(|error| error_json(error.to_string()));
 
     env.new_string(output)
+        .map(|value| value.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_sdelavega_lumenfall_core_LumenfallCore_blocklistJson(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    env.new_string(blocklist::blocklist_json())
         .map(|value| value.into_raw())
         .unwrap_or(std::ptr::null_mut())
 }

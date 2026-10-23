@@ -17,4 +17,5 @@ object LumenfallCore : CoreApi {
     override external fun parseLivelyProperties(json: String): String
     override external fun validateBundle(infoJson: String, basePath: String, filesJson: String): String
     override external fun screenBundle(scriptSource: String): String
+    override external fun blocklistJson(): String
 }

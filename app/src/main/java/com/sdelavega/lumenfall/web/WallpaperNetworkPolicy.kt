@@ -3,6 +3,8 @@
 package com.sdelavega.lumenfall.web
 
 import android.net.Uri
+import com.sdelavega.lumenfall.core.LumenfallCore
+import org.json.JSONObject
 
 /**
  * Decides whether a wallpaper WebView subresource request may proceed. Ported
@@ -10,9 +12,9 @@ import android.net.Uri
  * WKContentRuleList, so the checks run in shouldInterceptRequest instead), plus
  * the two global Performance-tab toggles ([blockAllExternal], [allowLan]):
  *
- * - ad / analytics / crypto-miner domains, cloud metadata hosts, `*.local`
- *   (mDNS), and IP-embedding DNS-rebinding services (nip.io/sslip.io) are
- *   always blocked, with no user override — these have no legitimate use in a
+ * - ad / analytics / crypto-miner domains, proprietary geolocation hosts,
+ *   cloud metadata hosts, `*.local` (mDNS), and IP-embedding DNS-rebinding
+ *   services (nip.io/sslip.io) are always blocked, with no user override — these have no legitimate use in a
  *   wallpaper and exist mainly as SSRF/credential-exfiltration vectors;
  * - private-range and loopback addresses (RFC1918, `localhost`) are blocked
  *   by default but permitted when [allowLan] is on, matching ÆtherDesk's
@@ -27,8 +29,12 @@ import android.net.Uri
  *
  * Local bundle traffic (the WebViewAssetLoader origin) never reaches this
  * policy — the host routes it to the asset loader first.
+ *
+ * The blocked domains/hosts/suffixes come from the Rust core ([Blocklist.shared]),
+ * the single source of truth also used by the bundle screener.
  */
 class WallpaperNetworkPolicy(
+    private val blocklist: Blocklist = Blocklist.shared,
     private val budgetPerMinute: Int? = null,
     blockAllExternal: Boolean = false,
     allowLan: Boolean = false,
@@ -54,17 +60,19 @@ class WallpaperNetworkPolicy(
             return Verdict.Block("scheme $scheme not allowed")
         }
         val host = uri.host?.lowercase() ?: return Verdict.Block("no host")
+        return decideHost(host)
+    }
 
-        if (isAlwaysBlocked(host)) return Verdict.Block("SSRF-protected host $host")
+    /** Host-level part of [decide] (scheme already checked); separate so JVM tests need no `Uri`. */
+    fun decideHost(rawHost: String): Verdict {
+        val host = rawHost.lowercase()
+        if (blocklist.blocks(host)) return Verdict.Block("blocklisted host $host")
         if (isPrivateOrLoopback(host)) {
             if (!allowLan) return Verdict.Block("LAN access disabled in Performance settings")
         } else if (isRawIpLiteral(host)) {
             return Verdict.Block("raw IP literal not allowed")
         }
         if (blockAllExternal) return Verdict.Block("external network disabled in Performance settings")
-        BLOCKED_DOMAINS.firstOrNull { host == it || host.endsWith(".$it") }?.let {
-            return Verdict.Block("blocklisted domain $it")
-        }
 
         val budget = budgetPerMinute ?: return Verdict.Allow
         synchronized(windowStarts) {
@@ -78,14 +86,6 @@ class WallpaperNetworkPolicy(
             windowStarts.addLast(now())
         }
         return Verdict.Allow
-    }
-
-    /** Hosts with no legitimate wallpaper use case — blocked regardless of settings. */
-    private fun isAlwaysBlocked(host: String): Boolean {
-        if (host.endsWith(".local")) return true // mDNS: can resolve to arbitrary LAN devices
-        if (host == "metadata.google.internal" || host == "metadata.azure.com") return true
-        if (host.endsWith(".nip.io") || host.endsWith(".sslip.io")) return true // DNS-rebinding as a service
-        return false
     }
 
     /** RFC1918 private ranges + loopback/localhost — gated by the allowLan setting. */
@@ -102,34 +102,37 @@ class WallpaperNetworkPolicy(
 
     private companion object {
         val IPV4 = Regex("""\d{1,3}(\.\d{1,3}){3}""")
+    }
+}
 
-        /** Ad networks, analytics/trackers, and crypto miners (ÆtherDesk list). */
-        val BLOCKED_DOMAINS = listOf(
-            "google-analytics.com",
-            "analytics.google.com",
-            "googletagmanager.com",
-            "googletagservices.com",
-            "doubleclick.net",
-            "googleadservices.com",
-            "googlesyndication.com",
-            "adservice.google.com",
-            "adnxs.com",
-            "adsrvr.org",
-            "connect.facebook.net",
-            "facebook.net",
-            "hotjar.com",
-            "mixpanel.com",
-            "segment.io",
-            "api.segment.com",
-            "amplitude.com",
-            "sentry.io",
-            "bugsnag.com",
-            "coinhive.com",
-            "crypto-loot.com",
-            "minero.cc",
-            "jsecoin.com",
-            "monerominer.rocks",
-            "webmr.eu"
-        )
+/**
+ * Network blocklist. [blocks] matches a lowercased host (one trailing dot
+ * ignored) by exact or subdomain match against [domains] and [hosts], and by
+ * suffix against [suffixes].
+ */
+data class Blocklist(
+    val domains: List<String>,
+    val hosts: Set<String>,
+    val suffixes: List<String>
+) {
+    fun blocks(host: String): Boolean {
+        val h = host.lowercase().removeSuffix(".")
+        if (domains.any { h == it || h.endsWith(".$it") }) return true
+        if (hosts.any { h == it || h.endsWith(".$it") }) return true
+        return suffixes.any { h.endsWith(it) }
+    }
+
+    companion object {
+        /** The core's list, loaded once per process and only on first use. */
+        val shared: Blocklist by lazy { fromJson(LumenfallCore.blocklistJson()) }
+
+        fun fromJson(json: String): Blocklist {
+            val obj = JSONObject(json)
+            fun strings(key: String): List<String> {
+                val arr = obj.getJSONArray(key)
+                return List(arr.length()) { arr.getString(it).lowercase() }
+            }
+            return Blocklist(strings("domains"), strings("hosts").toSet(), strings("suffixes"))
+        }
     }
 }

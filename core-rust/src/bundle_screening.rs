@@ -1,5 +1,6 @@
 // Copyright (C) 2026 Stephen de la Vega
 // SPDX-License-Identifier: GPL-3.0-or-later
+use crate::blocklist::{MINER_DOMAINS, TRACKER_DOMAINS};
 use serde::Serialize;
 
 /// Screens a web bundle's collected script source (all .js/.html text) and
@@ -85,30 +86,11 @@ fn inspect(js: &str, warnings: &mut Vec<String>, issues: &mut Vec<String>) {
         warnings.push("Requests system notification permission".to_string());
     }
 
-    // Tracker / ad domains -> hard reject.
-    const TRACKERS: &[&str] = &[
-        "googletagmanager",
-        "google-analytics",
-        "analytics.google",
-        "googletagservices",
-        "adservice.google",
-        "googlesyndication",
-        "doubleclick",
-        "facebook.net",
-        "connect.facebook",
-        "hotjar",
-        "mixpanel",
-        "segment.io",
-        "api.segment",
-        "amplitude",
-        "sentry.io",
-        "bugsnag",
-        "adnxs.com",
-        "adsrvr.org",
-    ];
-    for pattern in TRACKERS {
-        if js.contains(pattern) {
-            issues.push(format!("References {pattern} (tracker/ad script)"));
+    // Tracker / ad domains -> hard reject. Full domains only: bare words such
+    // as "amplitude" or "segment" appear in legitimate animation code.
+    for domain in TRACKER_DOMAINS {
+        if js.contains(domain) {
+            issues.push(format!("References {domain} (tracker/ad script)"));
         }
     }
 
@@ -166,6 +148,11 @@ fn inspect(js: &str, warnings: &mut Vec<String>, issues: &mut Vec<String>) {
     for pattern in MINERS {
         if js.contains(pattern) {
             issues.push(format!("Contains crypto mining code ({pattern})"));
+        }
+    }
+    for domain in MINER_DOMAINS {
+        if js.contains(domain) {
+            issues.push(format!("Contains crypto mining code ({domain})"));
         }
     }
 
@@ -253,6 +240,33 @@ mod tests {
         let report =
             BundleScreener::screen("var s = 'https://www.googletagmanager.com/gtag/js';");
         assert_eq!(report.classification, Classification::Rejected);
+    }
+
+    #[test]
+    fn every_blocked_domain_rejects() {
+        for domain in crate::blocklist::BLOCKED_DOMAINS {
+            let report = BundleScreener::screen(&format!("var u = 'https://{domain}/x.js';"));
+            assert_eq!(report.classification, Classification::Rejected, "{domain}");
+        }
+    }
+
+    #[test]
+    fn screener_ignores_line_segments_and_amplitude_words() {
+        let report = BundleScreener::screen(
+            "const l = new THREE.LineSegments(geo, mat); y = amplitude * Math.sin(t);",
+        );
+        assert_eq!(report.classification, Classification::Allowed);
+        assert!(report.issues.is_empty());
+    }
+
+    #[test]
+    fn screener_does_not_reject_privacy_hosts() {
+        let report = BundleScreener::screen(
+            "if (caps.geo) { x = 'https://ipapi.co/json'; y = 'https://api.bigdatacloud.net/data'; }",
+        );
+        assert!(report.issues.is_empty());
+        assert!(report.warnings.is_empty());
+        assert_eq!(report.classification, Classification::Allowed);
     }
 
     #[test]

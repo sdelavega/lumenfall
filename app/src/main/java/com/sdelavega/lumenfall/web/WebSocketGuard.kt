@@ -28,7 +28,7 @@ import java.net.InetAddress
  * Always registered for every web bundle — this is a security defense, not a
  * user preference. Ported from ÆtherDesk's `WebWallpaperRuntime.validateWebSocket`.
  */
-class WebSocketGuard(webView: WebView) {
+class WebSocketGuard(webView: WebView, private val blocklist: Blocklist = Blocklist.shared) {
     private val webViewRef = WeakReference(webView)
     private val main = Handler(Looper.getMainLooper())
 
@@ -52,10 +52,8 @@ class WebSocketGuard(webView: WebView) {
         // here in case a future caller bypasses it.
         if (isRawIp(host)) return false
 
-        // Always-blocked hosts (mDNS, metadata, DNS-rebinding services).
-        if (host.endsWith(".local")) return false
-        if (host == "metadata.google.internal" || host == "metadata.azure.com") return false
-        if (host.endsWith(".nip.io") || host.endsWith(".sslip.io")) return false
+        // Shared blocklist (trackers, metadata, mDNS, DNS-rebinding services).
+        if (blocklist.blocks(host)) return false
 
         // Resolve and check every resolved address. If ANY resolved IP is
         // private/loopback/metadata, reject — this is the DNS-rebinding defense.

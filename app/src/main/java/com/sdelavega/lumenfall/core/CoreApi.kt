@@ -8,4 +8,5 @@ interface CoreApi {
     fun parseLivelyProperties(json: String): String
     fun validateBundle(infoJson: String, basePath: String, filesJson: String): String
     fun screenBundle(scriptSource: String): String
+    fun blocklistJson(): String
 }
