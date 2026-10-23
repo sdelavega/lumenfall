@@ -7,7 +7,12 @@ import android.os.Looper
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import java.lang.ref.WeakReference
+import android.util.Log
 import java.net.InetAddress
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.SynchronousQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 /**
  * Validates WebSocket connection URLs before the real socket is created,
@@ -34,15 +39,36 @@ class WebSocketGuard(webView: WebView, private val blocklist: Blocklist = Blockl
 
     @JavascriptInterface
     fun validate(callId: String, url: String) {
-        Thread {
-            val allowed = isAllowed(url)
-            val js = "window.aetherDesk && window.aetherDesk._wsValidated(" +
-                "${org.json.JSONObject.quote(callId)}, $allowed);"
-            val wv = webViewRef.get()
-            if (wv != null) {
-                main.post { wv.evaluateJavascript(js, null) }
-            }
-        }.start()
+        try {
+            executor.execute { respond(callId, isAllowed(url)) }
+        } catch (e: RejectedExecutionException) {
+            // The JS API has no reason parameter: answer false and log why.
+            Log.w(TAG, "WebSocket validation rejected: too many concurrent connections")
+            respond(callId, false)
+        }
+    }
+
+    private fun respond(callId: String, allowed: Boolean) {
+        val js = "window.aetherDesk && window.aetherDesk._wsValidated(" +
+            "${org.json.JSONObject.quote(callId)}, $allowed);"
+        val wv = webViewRef.get()
+        if (wv != null) {
+            main.post { wv.evaluateJavascript(js, null) }
+        }
+    }
+
+    companion object {
+        private const val TAG = "WebSocketGuard"
+
+        /** Process-wide bounded pool: at most 8 concurrent validations, no queueing. */
+        private val executor = ThreadPoolExecutor(
+            0, 8, 30L, TimeUnit.SECONDS, SynchronousQueue(), ThreadPoolExecutor.AbortPolicy()
+        )
+
+        private val dnsCache = DnsCache(
+            now = { System.currentTimeMillis() },
+            resolve = { InetAddress.getAllByName(it).toList() }
+        )
     }
 
     private fun isAllowed(url: String): Boolean {
@@ -61,7 +87,7 @@ class WebSocketGuard(webView: WebView, private val blocklist: Blocklist = Blockl
         // rejected (defense in depth; the attacker could connect to the
         // private one).
         return try {
-            val addresses = InetAddress.getAllByName(host)
+            val addresses = dnsCache.lookup(host)
             addresses.none { isDisallowedIp(it) }
         } catch (e: Exception) {
             // DNS resolution failed — allow the WebSocket to proceed; the real

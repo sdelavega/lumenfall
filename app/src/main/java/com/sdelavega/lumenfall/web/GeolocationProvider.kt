@@ -3,6 +3,9 @@
 package com.sdelavega.lumenfall.web
 
 import android.content.Context
+import android.location.Address
+import android.location.Geocoder
+import android.util.Log
 import android.location.Location
 import android.location.LocationManager
 import android.os.Build
@@ -141,6 +144,7 @@ class GeolocationProvider(private val context: Context) {
             return
         }
         onResult(Result.Fix(toJson(location).toString()))
+        requestLabel(location)
     }
 
     private fun toJson(loc: Location): JSONObject = JSONObject().apply {
@@ -154,20 +158,40 @@ class GeolocationProvider(private val context: Context) {
         put("timestamp", loc.time)
         put("elapsedRealtimeNanos", loc.elapsedRealtimeNanos)
         put("provider", loc.provider ?: "unknown")
-        bestEffortLabel(loc)?.let { put("label", it) }
+        labelCache.get(loc.latitude, loc.longitude)?.let { put("label", it) }
     }
 
-    @Suppress("DEPRECATION")
-    private fun bestEffortLabel(loc: Location): String? = runCatching {
-        val geocoder = android.location.Geocoder(context, Locale.getDefault())
-        val address = geocoder.getFromLocation(loc.latitude, loc.longitude, 1)
-            ?.firstOrNull()
-            ?: return@runCatching null
-        val city = address.locality ?: address.subAdminArea ?: address.adminArea
-        val region = address.adminArea
-        listOfNotNull(city, region)
-            .distinct()
-            .joinToString(", ")
-            .ifBlank { null }
-    }.getOrNull()
+    /**
+     * Fills [labelCache] for the next request. Never blocks and never delays
+     * the position result; skipped entirely when no geocoder backend exists.
+     */
+    private fun requestLabel(loc: Location) {
+        if (labelCache.get(loc.latitude, loc.longitude) != null) return
+        if (!Geocoder.isPresent()) return
+        val lat = loc.latitude
+        val lon = loc.longitude
+        runCatching {
+            Geocoder(context, Locale.getDefault()).getFromLocation(lat, lon, 1,
+                object : Geocoder.GeocodeListener {
+                    override fun onGeocode(addresses: MutableList<Address>) {
+                        val address = addresses.firstOrNull() ?: return
+                        val city = address.locality ?: address.subAdminArea ?: address.adminArea
+                        listOfNotNull(city, address.adminArea)
+                            .distinct()
+                            .joinToString(", ")
+                            .ifBlank { null }
+                            ?.let { labelCache.put(lat, lon, it) }
+                    }
+
+                    override fun onError(errorMessage: String?) {
+                        Log.w(TAG, "geocoder error: $errorMessage")
+                    }
+                })
+        }.onFailure { Log.w(TAG, "geocoder request failed", it) }
+    }
+
+    private companion object {
+        const val TAG = "GeolocationProvider"
+        val labelCache = LabelCache()
+    }
 }
