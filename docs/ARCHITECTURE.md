@@ -113,6 +113,11 @@ Settings UI (DONE, 2026-07-03):
   caused it (coalescing a whole slider drag into one revert target) or, when
   overload isn't attributable to a specific change, eases the live fps cap
   — a per-session easing, not persisted to the bundle's screening record.
+  The CPU backstop (`Process.getElapsedCpuTime`) measures only the host
+  process: the WebView's renderer runs in an isolated process whose CPU this
+  app cannot read, as no public API exposes its pid. Frame pressure is the
+  renderer-cost proxy (#25). The on-device `/proc` readability probe is part
+  of the release smoke run, to confirm that assumption on real hardware.
 
 MainActivity (DONE, 2026-07-03): same responsive-split + glass-everywhere
 treatment as the settings screen — wallpapers/import on one side (left in

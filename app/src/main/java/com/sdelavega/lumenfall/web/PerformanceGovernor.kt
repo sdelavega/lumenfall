@@ -17,10 +17,14 @@ import android.os.SystemClock
  * honest proxy available: achieved frames-per-second against the bundle's own
  * target `fpsCap`, fed in via [onFrameReport] from the bridge shim's rAF
  * counter (see `BundleWebView`'s periodic "tick" message). A sustained
- * shortfall means the device can't keep up — whatever the actual bottleneck
- * (CPU compositing, GPU fill rate, heavy JS) — and it's the one signal that
- * reaches inside the WebView's own sandboxed renderer process, which this
- * app's own process-local reads below cannot see into.
+ * shortfall means the device can't keep up, whatever the actual bottleneck
+ * (CPU compositing, GPU fill rate, heavy JS).
+ *
+ * The WebView renders in an isolated, sandboxed renderer process.
+ * [Process.getElapsedCpuTime] measures only this (host) process, and the
+ * renderer's CPU is not readable by this app: no public API exposes its pid.
+ * Frame pressure is therefore the renderer-cost proxy; it is the one signal
+ * that reaches inside that sandboxed process.
  *
  * Two coarser backstops run alongside it, in case a bundle is heavy without
  * visibly janking:
@@ -99,12 +103,11 @@ class PerformanceGovernor(
         if (!running) return
         val now = SystemClock.elapsedRealtime()
 
-        val elapsedS = (now - windowStartMs) / 1000.0
-        if (elapsedS >= 1.0) {
-            val achieved = (lastFrameCount - framesAtWindowStart) / elapsedS
+        if (now - windowStartMs >= 1000L) {
+            val jank = isJankWindow(lastFrameCount - framesAtWindowStart, now - windowStartMs, fpsCap)
             windowStartMs = now
             framesAtWindowStart = lastFrameCount
-            jankStreak = if (achieved < fpsCap * JANK_RATIO) jankStreak + 1 else 0
+            jankStreak = nextStreak(jankStreak, jank)
         }
 
         val cpuNow = Process.getElapsedCpuTime()
@@ -113,7 +116,7 @@ class PerformanceGovernor(
         lastCpuTimeMs = cpuNow
         lastWallTimeMs = now
         val cpuPercent = if (wallDeltaMs > 0) 100.0 * cpuDeltaMs / wallDeltaMs else 0.0
-        cpuStreak = if (cpuPercent > CPU_THRESHOLD_PERCENT) cpuStreak + 1 else 0
+        cpuStreak = nextStreak(cpuStreak, cpuPercent > CPU_THRESHOLD_PERCENT)
 
         val memInfo = ActivityManager.MemoryInfo()
         activityManager.getMemoryInfo(memInfo)
