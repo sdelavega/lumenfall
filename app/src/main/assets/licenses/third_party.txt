@@ -35,7 +35,7 @@ Neon City [NeonCity]
 Rainfall [Rainfall]
   Author: Stephen de la Vega
   License: GPL-3.0-or-later (see Rainfall/LICENSE.txt)
-  Source: https://github.com/sdelavega/Lumenfall
+  Source: https://github.com/sdelavega/lumenfall
 
 Weather Aether [WeatherAether]
   Author: ÆtherDesk

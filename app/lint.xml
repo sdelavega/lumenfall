@@ -27,7 +27,7 @@
          miner-domain blocking, WebSocket guard), and the bridge shim and the
          JavascriptInterface surface are fixed and tested (ShimAssetTest,
          WallpaperNetworkPolicyTest). -->
-    <issue id="SetJavaScriptEnabled" severity="ignore">
+    <issue id="SetJavaScriptEnabled">
         <ignore path="**/web/BundleWebView.kt" />
     </issue>
 
@@ -44,7 +44,7 @@
     <!-- SplitPaneLayout's divider is a drag handle, not a button: there is no click
          action to perform. Keyboard/TalkBack users resize through the divider's
          AccessibilityDelegate (widen/narrow actions). -->
-    <issue id="ClickableViewAccessibility" severity="ignore">
+    <issue id="ClickableViewAccessibility">
         <ignore path="**/ui/SplitPaneLayout.kt" />
     </issue>
 </lint>

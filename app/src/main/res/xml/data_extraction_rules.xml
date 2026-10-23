@@ -1,11 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Copyright (C) 2026 Stephen de la Vega -->
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- Keeps the long-standing backup behaviour (everything is eligible for cloud
-     backup and device-to-device transfer) but states it explicitly, as Android 12+
-     requires. The app stores only imported wallpaper bundles and preferences, no
-     credentials or tokens. -->
+<!-- Cloud backup keeps shared preferences but skips imported wallpaper bundles
+     (files/bundles/, up to 512 MB of third-party content) and the regenerable
+     bundled-wallpaper thumbnails (files/bundled-thumbnails/). Device-to-device
+     transfer keeps everything. The app stores no credentials or tokens. -->
 <data-extraction-rules>
-    <cloud-backup />
+    <cloud-backup>
+        <exclude domain="file" path="bundles/" />
+        <exclude domain="file" path="bundled-thumbnails/" />
+    </cloud-backup>
     <device-transfer />
 </data-extraction-rules>

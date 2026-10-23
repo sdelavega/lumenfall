@@ -6,16 +6,16 @@ Lumenfall is licensed GPL-3.0-or-later. It bundles and links the following third
 
 ## Bundled wallpapers
 
-| Wallpaper | Folder | Author | Licence | Source |
-|---|---|---|---|---|
-| Gradient Wave | `GradientWave` | ÆtherDesk | GPL-3.0-only | https://github.com/sdelavega/AetherDesk |
-| Fluids | `LivelyFluids` | PavelDoGreat | MIT | https://github.com/rocksdanister/WebGL-Fluid-Simulation |
-| The Hill | `LivelyTheHill` | Yoichi Kobayashi | MIT | https://codepen.io/ykob/pen/aBrjaR |
-| Triangles & Light | `LivelyTrianglesLight` | Maksim Surguy | MIT | https://codepen.io/msurguy/pen/sbIio |
-| Matrix Rain | `MatrixRain` | ÆtherDesk | GPL-3.0-only | https://github.com/sdelavega/AetherDesk |
-| Neon City | `NeonCity` | Veles | MIT | https://github.com/sdelavega/AetherDesk |
-| Rainfall | `Rainfall` | Stephen de la Vega | GPL-3.0-or-later | https://github.com/sdelavega/Lumenfall |
-| Weather Aether | `WeatherAether` | ÆtherDesk | GPL-3.0-only | https://github.com/sdelavega/AetherDesk |
+| Wallpaper | Folder | Author | Licence | Licence file | Source |
+|---|---|---|---|---|---|
+| Gradient Wave | `GradientWave` | ÆtherDesk | GPL-3.0-only |  | https://github.com/sdelavega/AetherDesk |
+| Fluids | `LivelyFluids` | PavelDoGreat | MIT | `LivelyFluids/LICENSE.txt` | https://github.com/rocksdanister/WebGL-Fluid-Simulation |
+| The Hill | `LivelyTheHill` | Yoichi Kobayashi | MIT | `LivelyTheHill/license.txt` | https://codepen.io/ykob/pen/aBrjaR |
+| Triangles & Light | `LivelyTrianglesLight` | Maksim Surguy | MIT | `LivelyTrianglesLight/license.txt` | https://codepen.io/msurguy/pen/sbIio |
+| Matrix Rain | `MatrixRain` | ÆtherDesk | GPL-3.0-only |  | https://github.com/sdelavega/AetherDesk |
+| Neon City | `NeonCity` | Veles | MIT |  | https://github.com/sdelavega/AetherDesk |
+| Rainfall | `Rainfall` | Stephen de la Vega | GPL-3.0-or-later | `Rainfall/LICENSE.txt` | https://github.com/sdelavega/lumenfall |
+| Weather Aether | `WeatherAether` | ÆtherDesk | GPL-3.0-only |  | https://github.com/sdelavega/AetherDesk |
 
 ## Rust crates
 

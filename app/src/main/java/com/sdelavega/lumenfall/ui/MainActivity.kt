@@ -442,7 +442,10 @@ class MainActivity : AppCompatActivity() {
     private fun showLicences() {
         val text = runCatching {
             assets.open("licenses/third_party.txt").bufferedReader().use { it.readText() }
-        }.getOrElse { "The licence notices could not be loaded." }
+        }.getOrElse {
+            android.util.Log.w("MainActivity", "Could not read licenses/third_party.txt", it)
+            "The licence notices could not be loaded."
+        }
         GlassUi.messageDialog(this, title = "Open-source licences", message = text, scrollable = true)
     }
 
