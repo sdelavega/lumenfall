@@ -16,7 +16,7 @@ import org.json.JSONObject
  * Fetches the device's current location via the framework [LocationManager].
  *
  * Why not FusedLocationProvider (play-services-location): Lumenfall ships no
- * Play Services dependency today (the app is 3.5 MB and runs on any
+ * Play Services dependency today (the APK is about 8 MB and runs on any
  * Android 13+ device, not just ones with Play). The framework
  * `getCurrentLocation` (API 30+, our minSdk is 33) gives a one-shot fix
  * without a persistent client or service binding, which is exactly what a

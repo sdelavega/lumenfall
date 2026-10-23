@@ -36,8 +36,11 @@
          WebView.pauseTimers()/resumeTimers(), a process-global WebView latch. -->
     <issue id="StaticFieldLeak">
         <ignore path="**/web/WebViewTimers.kt" />
-        <!-- BundleThumbnailer.Target holds context.applicationContext only (see
-             generateMissing), and is cleared when the queue goes idle. -->
+        <!-- BundleThumbnailer.target holds the application context and the BundleStore, but
+             also Target.onProgress, a lambda that captures the calling Activity (MainActivity).
+             That reference is not leaked unboundedly: runJob clears `target` as soon as the
+             queue goes idle, so a destroyed Activity is retained only while a thumbnail job
+             is still queued or running (seconds, bounded by the 12 s capture timeout). -->
         <ignore path="**/web/BundleThumbnailer.kt" />
     </issue>
 

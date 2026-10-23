@@ -351,7 +351,7 @@ the user may grant approximate location):
 - A live wallpaper runs in the background and can't host a permission dialog,
   so the per-bundle toggle in `BundleSettingsActivity` (an Activity) is the
   only entry point that prompts. Turning the toggle on with permission not
-  yet granted launches `RequestPermission`; denied → the toggle reverts.
+  yet granted launches `RequestMultiplePermissions` (fine and coarse together); denied → the toggle reverts.
   Permission is also re-checked per bridge call inside `GeolocationProvider`,
   so a mid-session revoke surfaces as a clean JS `denied` rejection rather
   than a crash (the policy snapshot was taken at load, but revocation is the
@@ -370,7 +370,7 @@ the user may grant approximate location):
   services.
 - Provider: the framework `LocationManager.getCurrentLocation` (API 30+, our
   minSdk is 33), not FusedLocationProvider. Lumenfall ships no Play Services
-  dependency today (3.5 MB APK, runs on any Android 13+ device); the framework
+  dependency today (an ~8 MB APK, runs on any Android 13+ device); the framework
   one-shot API needs no persistent client or service binding. Provider
   selection prefers GPS when enabled, else NETWORK — a WiFi-only tablet like
   the Pixel Tablet has no GPS_PROVIDER at all, so `isProviderEnabled` gates
@@ -437,7 +437,7 @@ Release build (DONE, 2026-07-03):
   it still assembles. The keystore is the app's permanent identity — back it up
   privately; losing it means users can never update.
 - Verified on the Pixel Tablet: import (both JNI calls), all three renderer
-  kinds, settings UI, and override persistence work minified. APK is 3.5 MB.
+  kinds, settings UI, and override persistence work minified. The release APK is about 8 MB (three.js and the bundled wallpapers are most of it).
   Visible CPU for the busy 60 fps web bundle: ~60% of one core (vs ~111%
   debug); 0.0% hidden. Debug↔release switches need a full uninstall (different
   signatures), which wipes imported bundles. Cloud backup excludes imported
