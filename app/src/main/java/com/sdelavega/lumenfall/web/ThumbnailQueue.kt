@@ -23,6 +23,9 @@ class ThumbnailQueue(private val worker: (id: String, done: () -> Unit) -> Unit)
     /** Ids waiting to start (excludes the one in flight). */
     val pending: Int get() = queued.size
 
+    /** True when no job is in flight and nothing is queued. */
+    val idle: Boolean get() = currentJob == null && queued.isEmpty()
+
     fun enqueue(ids: List<String>) {
         for (id in ids) {
             if (id == inFlightId || id in queued) continue
@@ -34,6 +37,7 @@ class ThumbnailQueue(private val worker: (id: String, done: () -> Unit) -> Unit)
     private fun pump() {
         if (pumping) return
         pumping = true
+        var failure: Throwable? = null
         try {
             while (currentJob == null && queued.isNotEmpty()) {
                 val id = queued.removeFirst()
@@ -50,12 +54,16 @@ class ThumbnailQueue(private val worker: (id: String, done: () -> Unit) -> Unit)
                 try {
                     worker(id, done)
                 } catch (t: Throwable) {
+                    // A throwing worker counts as finished so the queue can't
+                    // stall; remaining jobs still run, then the first failure
+                    // is rethrown to the caller.
                     done()
-                    throw t
+                    if (failure == null) failure = t
                 }
             }
         } finally {
             pumping = false
         }
+        failure?.let { throw it }
     }
 }

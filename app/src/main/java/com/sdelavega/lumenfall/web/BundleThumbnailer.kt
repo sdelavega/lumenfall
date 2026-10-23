@@ -70,7 +70,7 @@ object BundleThumbnailer {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    /** Latest caller context; the process-wide queue's worker reads it at run time. */
+    /** Latest caller context (cleared when the queue goes idle); the process-wide queue's worker reads it at run time. */
     private class Target(val app: Context, val store: BundleStore, val onProgress: () -> Unit)
 
     private var target: Target? = null
@@ -117,6 +117,9 @@ object BundleThumbnailer {
             // Advance the queue first; progress (which may re-enter
             // generateMissing) runs outside any queue state mutation.
             done()
+            // Drop the captured callback (it may hold a destroyed Activity)
+            // once nothing is left to run.
+            if (queue.idle) target = null
             if (updated != null) t.onProgress()
         }
     }

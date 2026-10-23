@@ -84,4 +84,34 @@ class ThumbnailQueueTest {
         sync.enqueue((1..5000).map { it.toString() })
         assertEquals(5000, order.size)
     }
+
+    @Test
+    fun idleAfterLastJobCompletes() {
+        val h = Harness()
+        assertEquals(true, h.queue.idle)
+        h.queue.enqueue(listOf("a"))
+        assertEquals(false, h.queue.idle)
+        h.dones[0]()
+        assertEquals(true, h.queue.idle)
+        h.queue.enqueue(listOf("b"))
+        assertEquals(false, h.queue.idle)
+    }
+
+    @Test
+    fun workerThrowAdvancesQueue() {
+        val started = mutableListOf<String>()
+        val queue = ThumbnailQueue { id, done ->
+            started += id
+            if (id == "a") throw IllegalStateException("boom")
+            done()
+        }
+        try {
+            queue.enqueue(listOf("a", "b"))
+            org.junit.Assert.fail("expected exception")
+        } catch (e: IllegalStateException) {
+            assertEquals("boom", e.message)
+        }
+        assertEquals(listOf("a", "b"), started)
+        assertEquals(true, queue.idle)
+    }
 }
