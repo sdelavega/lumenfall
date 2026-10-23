@@ -8,15 +8,50 @@ import java.io.File
 import java.io.InputStream
 import java.util.zip.ZipInputStream
 
+/**
+ * Extraction caps. The defaults mirror `MAX_SINGLE_FILE_BYTES`, `MAX_TOTAL_BYTES` and
+ * `MAX_FILES` in `core-rust/src/bundle_validation.rs`; keep them in step. The Rust
+ * validator only sees the finished on-disk inventory, so these stop a zip bomb
+ * while it is still being written.
+ */
+data class ExtractLimits(val maxFileBytes: Long, val maxTotalBytes: Long, val maxEntries: Int) {
+    companion object {
+        val DEFAULT = ExtractLimits(
+            maxFileBytes = 256L * 1024 * 1024,
+            maxTotalBytes = 512L * 1024 * 1024,
+            maxEntries = 2_000
+        )
+    }
+}
+
 /** Pure JVM file helpers for imported bundles; kept Android-free for tests. */
 object BundleFiles {
-    /** Extract every entry into [destDir], rejecting any path that escapes it. */
-    fun extractZip(input: InputStream, destDir: File) {
+    /**
+     * Extract every entry into [destDir], rejecting any path that escapes it and
+     * aborting with a [SecurityException] once inflated sizes or the entry count pass
+     * [limits]. On any failure everything extracted so far is deleted.
+     */
+    fun extractZip(input: InputStream, destDir: File, limits: ExtractLimits = ExtractLimits.DEFAULT) {
+        try {
+            extract(input, destDir, limits)
+        } catch (t: Throwable) {
+            destDir.listFiles()?.forEach { it.deleteRecursively() }
+            throw t
+        }
+    }
+
+    private fun extract(input: InputStream, destDir: File, limits: ExtractLimits) {
         val root = destDir.canonicalFile
         val prefix = root.path + File.separator
+        var entries = 0
+        var total = 0L
+        val buffer = ByteArray(COPY_BUFFER)
         ZipInputStream(input.buffered()).use { zis ->
             var entry = zis.nextEntry
             while (entry != null) {
+                if (++entries > limits.maxEntries) {
+                    throw SecurityException("Zip has more than ${limits.maxEntries} entries")
+                }
                 // File(root, "/abs") silently resolves under root, so reject absolute
                 // names explicitly rather than extracting them somewhere unintended.
                 if (entry.name.startsWith("/") || entry.name.startsWith("\\")) {
@@ -31,13 +66,32 @@ object BundleFiles {
                     out.mkdirs()
                 } else {
                     out.parentFile?.mkdirs()
-                    out.outputStream().use { zis.copyTo(it) }
+                    var fileBytes = 0L
+                    out.outputStream().use { sink ->
+                        while (true) {
+                            val n = zis.read(buffer)
+                            if (n < 0) break
+                            fileBytes += n
+                            total += n
+                            if (fileBytes > limits.maxFileBytes) {
+                                throw SecurityException(
+                                    "Zip entry ${entry.name} is larger than ${limits.maxFileBytes} bytes"
+                                )
+                            }
+                            if (total > limits.maxTotalBytes) {
+                                throw SecurityException("Zip expands past ${limits.maxTotalBytes} bytes")
+                            }
+                            sink.write(buffer, 0, n)
+                        }
+                    }
                 }
                 zis.closeEntry()
                 entry = zis.nextEntry
             }
         }
     }
+
+    private const val COPY_BUFFER = 64 * 1024
 
     /**
      * Shallowest `LivelyInfo.json` (bundles sometimes nest under one folder).
