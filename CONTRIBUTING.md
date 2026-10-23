@@ -22,8 +22,8 @@ run `just gate`; CI runs the same thing.
   with each behaviour change.
 - The bundle-facing bridge keeps its names (`window.aetherDesk.*`,
   `livelyPropertyListener`, `onPropertyChange`).
-- Vendored wallpapers under `app/src/main/assets/wallpapers/` are synced from
-  their upstream with `just sync-wallpapers <ref>`; do not edit them by hand
+- The four wallpapers vendored from ÆtherDesk under `app/src/main/assets/wallpapers/` are synced from
+  upstream with `just sync-wallpapers <ref>`; do not edit them by hand
   (`just wallpapers-lock` fails if you do). Fix them upstream.
 - No developer home paths in tracked files (`just no-home-paths`).
 - Never commit signing keys or `keystore.properties`.

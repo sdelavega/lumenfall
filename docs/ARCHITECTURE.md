@@ -356,7 +356,8 @@ the user may grant approximate location):
 - Lumenfall never sets `window.aetherDesk.system.capabilities.ipGeolocation`,
   so WeatherAether's ipapi.co and BigDataCloud paths stay off (and the network
   policy blocks those hosts anyway); it uses device location or a typed city,
-  with Open-Meteo and MET Norway as its only services.
+  with `api.open-meteo.com` and `geocoding-api.open-meteo.com` as its only
+  services.
 - Provider: the framework `LocationManager.getCurrentLocation` (API 30+, our
   minSdk is 33), not FusedLocationProvider. Lumenfall ships no Play Services
   dependency today (3.5 MB APK, runs on any Android 13+ device); the framework

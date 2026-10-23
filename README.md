@@ -66,10 +66,11 @@ licence.
   `api.bigdatacloud.net` are blocked for every wallpaper.
 - Imported bundles are screened when you import them; ones that use trackers,
   miners or other unsafe patterns are rejected.
-- Weather Aether contacts Open-Meteo (forecast), Open-Meteo geocoding (city
-  search) and MET Norway. Its IP-geolocation and BigDataCloud code paths are
-  disabled in Lumenfall: they need a host capability that Lumenfall never
-  sets, and the network policy blocks both hosts regardless. Location is
+- Weather Aether contacts only Open-Meteo: `api.open-meteo.com` (forecast) and
+  `geocoding-api.open-meteo.com` (city search). Its ipapi.co (IP location) and
+  BigDataCloud (place name) calls run only when the host sets the
+  `ipGeolocation` capability. Lumenfall never sets it, and its network policy
+  blocks both hosts as defence in depth. Location is
   optional, per wallpaper, and either approximate or precise; you can type a
   city instead.
 - Cloud backup skips imported bundles and thumbnails.
