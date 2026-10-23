@@ -436,6 +436,7 @@ private class WallpaperPresentation(
     private var navRetried = false
     private var failed = false
     @Volatile private var contentVisible = true
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var policySuspended = initiallySuspended
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -571,6 +572,15 @@ private class WallpaperPresentation(
 
     /** The renderer sandbox process died; this WebView instance is unusable now. */
     private fun handleRenderProcessGone() {
+        // May be invoked from a WebView-internal thread; mutate only on main.
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            handleRenderProcessGoneOnMain()
+        } else {
+            mainHandler.post { handleRenderProcessGoneOnMain() }
+        }
+    }
+
+    private fun handleRenderProcessGoneOnMain() {
         if (failed) return
         webView?.let {
             WebViewTimers.forget(this, it)
