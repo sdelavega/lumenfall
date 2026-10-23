@@ -4,6 +4,7 @@
     "Title": "Gradient Wave",
     "Description": "Animated gradient wave",
     "Author": "ÆtherDesk",
+    "License": "GPL-3.0-only",
     "Type": "web",
     "Manifest": ["index.html"]
 }

@@ -1,6 +1,16 @@
 'use strict';
 
-var PREVIEW_CODES={clear:0,partly:2,overcast:3,fog:45,rain:63,sleet:66,snow:73,thunder:95};
+var PREVIEW_CODES={
+  clear:0,partly:2,overcast:3,fog:45,
+  'light-drizzle':51,'moderate-drizzle':53,'dense-drizzle':55,
+  'slight-rain':61,'moderate-rain':63,'heavy-rain':65,
+  'slight-showers':80,'moderate-showers':81,'violent-showers':82,
+  'light-freezing-drizzle':56,'dense-freezing-drizzle':57,
+  freezing:66,'light-freezing-rain':66,'heavy-freezing-rain':67,
+  snow:73,'slight-snow':71,'moderate-snow':73,'heavy-snow':75,'snow-grains':77,
+  'slight-snow-showers':85,'heavy-snow-showers':86,
+  thunder:95,hail:99,'slight-hail':96,'heavy-hail':99
+};
 
 function readPreviewConfig(){
   var params=new URLSearchParams(window.location.search);
@@ -16,13 +26,14 @@ function readPreviewConfig(){
 function buildPreviewWeather(){
   var now=wallpaperNow();
   var code=PREVIEW_CODES[S.previewCondition];
+  var visualState=wmoBucket(code);
   var isDay=S.previewHour>=6&&S.previewHour<18;
   var date=now.toISOString().slice(0,10);
   var days=[],codes=[],highs=[],lows=[],precip=[];
   for(var i=0;i<5;i++){
     var day=new Date(now.getTime()+i*86400000);
     days.push(day.toISOString().slice(0,10));
-    codes.push(code);highs.push(72-i);lows.push(54-i);precip.push(Math.round((ATMOSPHERIC_PROFILES[S.previewCondition].precipitation||0)*100));
+    codes.push(code);highs.push(72-i);lows.push(54-i);precip.push(Math.round((derivePrecipitationTraits(code,visualState,ATMOSPHERIC_PROFILES[visualState]).intensity||0)*100));
   }
   return{
     _units:'imperial',_src:'open-meteo',
@@ -50,7 +61,9 @@ function buildPreviewWeather(){
 //      location has moved.
 function init(){
   S.canvas=document.getElementById('wa-sky');
-  S.ctx=S.canvas.getContext('2d');
+  try{S.ctx=S.canvas.getContext('2d');}
+  catch(error){S.ctx=null;console.warn('Weather Aether: Canvas unavailable.',error);}
+  applyRendererPreference();
   var preview=readPreviewConfig();
   var now=wallpaperNow();
   var hr=now.getHours();
@@ -61,9 +74,9 @@ function init(){
   setupAttribution();
   setupVisibility();
   if(preview){
-    S.label='Preview — '+S.previewCondition.charAt(0).toUpperCase()+S.previewCondition.slice(1);
+    S.label='Preview — '+S.previewCondition.replace(/-/g,' ').replace(/\b\w/g,function(letter){return letter.toUpperCase();});
     applyWeather(buildPreviewWeather());
-    S.animationFrameId=requestAnimationFrame(render);
+    syncRendererAnimation();
     return;
   }
   var cachedLoc=loadCachedLocation();
@@ -71,7 +84,7 @@ function init(){
   var cachedW=loadCachedWeather();
   if(cachedW){applyWeather(cachedW);}
   else{renderFallbackUI();showPill('waiting for weather\u2026');}
-  S.animationFrameId=requestAnimationFrame(render);
+  syncRendererAnimation();
   // Eagerly refresh the cached coordinates ONLY in auto mode, where the cached
   // location is the user's last real location and showing it fast is the point.
   // In manual mode the cached coordinates may belong to a different place, and

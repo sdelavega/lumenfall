@@ -4,6 +4,7 @@
     "Title": "Weather Aether",
     "Description": "Live weather wallpaper with animated sky, sun, moon phases, and forecast",
     "Author": "ÆtherDesk",
+    "License": "GPL-3.0-only",
     "Type": "web",
     "Manifest": ["index.html"]
 }

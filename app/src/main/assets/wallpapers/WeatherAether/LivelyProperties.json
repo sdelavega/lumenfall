@@ -1,6 +1,13 @@
 {
     "properties": [
         {
+            "Name": "renderer",
+            "Description": "Renderer",
+            "Type": "dropdown",
+            "Value": "auto",
+            "Items": ["auto", "classic"]
+        },
+        {
             "Name": "locationMode",
             "Description": "Location resolution mode",
             "Type": "dropdown",

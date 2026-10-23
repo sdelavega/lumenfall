@@ -107,13 +107,15 @@ var S={
   props:{
     locationMode:'auto',manualLocation:'',
     units:'imperial',forecastOpacity:0.9,
-    animationSpeed:1.0,showParticles:true,accentColor:'#6fb8ff'
+    animationSpeed:1.0,showParticles:true,accentColor:'#6fb8ff',renderer:'auto'
   },
-  particles:[],stars:[],clouds:[],cloudSprites:[],cloudLightingKey:null,particleType:null,weatherBucket:'clear',
+  particles:[],stars:[],clouds:[],cloudSprites:[],cloudLightingKey:null,particleType:null,particleProfileKey:null,weatherBucket:'clear',
   atmosphere:null,
   animationFrameId:null,refreshTimeout:null,lastFrameTime:0,fetchSeq:0,locSeq:0,
-  lightningAlpha:0,lightningCooldown:5,fogAlpha:0,motionTime:0,windGust:1,
-  canvas:null,ctx:null,iconCache:{},skyPaintCache:null,moonTexture:null
+  lightningAlpha:0,lightningBolt:null,lightningBoltAlpha:0,lightningCooldown:5,fogAlpha:0,motionTime:0,windGust:1,
+  canvas:null,ctx:null,iconCache:{},skyPaintCache:null,moonTexture:null,
+  renderer:null,rendererFailureReason:null,threeUnavailable:false,pendingRendererDemotion:null,
+  useThreeRenderer:false,threeAtmosphere:null,threeClouds:null,threeRain:null,threeFreezing:null,threeSnow:null,threeHail:null
 };
 
 function lerp(a,b,t){return a+(b-a)*t}

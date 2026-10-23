@@ -115,13 +115,21 @@ function autoLocation(seq){
 
 
 
-// ── reverseGeocode() ─────────────────────────────────────────────────────────
-// Converts a lat/lon pair into a human-readable city label using the
-// BigDataCloud reverse-geocoding API (free, no API key required). Returns a
-// Promise that always resolves to a non-empty string — falls back gracefully
-// to 'Current Location' if the network request fails, times out, or returns
-// no recognisable place data. The label format mirrors fetchIP(): "City, ST CC".
+// ── Host location capabilities ───────────────────────────────────────────────
+// Standalone/Lively hosts use device coordinates and cache only. The macOS
+// bridge explicitly enables IP lookup and BigDataCloud place labels.
+function hasHostCapability(name){
+  var system=window.aetherDesk&&window.aetherDesk.system;
+  return !!(system&&system.capabilities&&system.capabilities[name]===true);
+}
+
+function coordinateLabel(lat,lon){
+  return typeof lat==='number'&&isFinite(lat)&&typeof lon==='number'&&isFinite(lon)
+    ?lat.toFixed(2)+', '+lon.toFixed(2):'Current location';
+}
+
 function reverseGeocode(lat,lon){
+  if(!hasHostCapability('ipGeolocation'))return Promise.resolve(coordinateLabel(lat,lon));
   var url='https://api.bigdatacloud.net/data/reverse-geocode-client'
         +'?latitude='+lat+'&longitude='+lon+'&localityLanguage=en';
   return fetchWithTimeout(url,6000)
@@ -146,6 +154,7 @@ function reverseGeocode(lat,lon){
 // from city + region + country fields. Falls through to fallbackLoc() (last
 // cached location) if the request fails or returns incomplete data.
 function fetchIP(seq){
+  if(!hasHostCapability('ipGeolocation'))return Promise.resolve(fallbackLoc(seq));
   return fetchWithTimeout('https://ipapi.co/json/',6000)
     .then(function(r){return r.json();})
     .then(function(d){
@@ -163,17 +172,22 @@ function fetchIP(seq){
 
 
 // ── fallbackLoc() ────────────────────────────────────────────────────────────
-// Last resort: restores the previously cached location from localStorage.
-// If no cache exists, geocodes the configured manualLocation property via
-// geocoding-api.open-meteo.com (the same service manual mode uses). This
-// ensures auto mode can still display weather on networks where CoreLocation
-// is unavailable and all IP-geolocation services are DNS-blocked, as long as
-// the user's configured manualLocation resolves. Returns a boolean or
-// Promise<boolean>; both are safe to return from a Promise .catch() handler.
+// Restores the cached location after device/IP lookup fails. Without the
+// host capability, auto mode stops here and asks the user to set a city.
+// The macOS host retains its configured manual-city fallback. Returns a
+// boolean or Promise<boolean>; both are safe in a Promise .catch() handler.
 function fallbackLoc(seq){
   if(seq!==S.locSeq)return false;
   var loc=loadCachedLocation();
-  if(loc){S.lat=loc.lat;S.lon=loc.lon;S.label=loc.label;return true;}
+  if(loc){
+    S.lat=loc.lat;S.lon=loc.lon;
+    S.label=hasHostCapability('ipGeolocation')?loc.label:coordinateLabel(loc.lat,loc.lon);
+    return true;
+  }
+  if(!hasHostCapability('ipGeolocation')){
+    showPill("Set a city in this wallpaper's settings");
+    return false;
+  }
   if(S.props.manualLocation&&S.props.manualLocation.trim()){
     return geocodeManual(S.props.manualLocation,seq);
   }
@@ -336,9 +350,12 @@ function applyWeather(d){
   }
   var nb=wmoBucket(cur.weather_code);
   S.atmosphere=deriveAtmosphericState(d);
+  if(S.renderer==='static')applyStaticAtmosphere(S.atmosphere);
   S.skyPaintCache=null;
-  if(nb!==S.weatherBucket||S.particleType===null){
+  var particleProfileKey=String(cur.weather_code);
+  if(nb!==S.weatherBucket||S.particleType===null||S.particleProfileKey!==particleProfileKey){
     S.weatherBucket=nb;
+    S.particleProfileKey=particleProfileKey;
     rebuildParticles();
   }
   setupAttribution();

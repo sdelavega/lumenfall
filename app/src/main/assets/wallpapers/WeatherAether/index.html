@@ -7,7 +7,9 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','Segoe UI',sans-serif;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
-#wa-sky{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0}
+#wa-webgl,#wa-sky{position:fixed;top:0;left:0;width:100%;height:100%}
+#wa-webgl{z-index:0;display:none}
+#wa-sky{z-index:1}
 #wa-current{position:fixed;top:calc(50% - 220px);left:50%;transform:translateX(-50%);z-index:10;width:fit-content;max-width:min(624px,84%);color:#fff;text-shadow:0 1px 4px rgba(0,0,0,0.6),0 0 14px rgba(0,0,0,0.22);pointer-events:none}
 #wa-current-scrim{position:relative;background:linear-gradient(155deg,rgba(30,40,65,0.52) 0%,rgba(15,20,45,0.42) 100%);backdrop-filter:blur(36px) saturate(1.7);-webkit-backdrop-filter:blur(36px) saturate(1.7);border-radius:24px;padding:26px 34px 22px;border:1px solid rgba(255,255,255,0.20);box-shadow:0 10px 44px rgba(0,0,0,0.28),inset 0 1px 0 rgba(255,255,255,0.38),inset 0 -1px 0 rgba(0,0,0,0.10)}
 #wa-top-row{display:flex;align-items:center;gap:14px;margin-bottom:6px}
@@ -32,6 +34,7 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:-apple-system,Blink
 </style>
 </head>
 <body>
+<canvas id="wa-webgl"></canvas>
 <canvas id="wa-sky"></canvas>
 <div id="wa-current">
   <div id="wa-current-scrim">
@@ -52,12 +55,15 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:-apple-system,Blink
 </div>
 <div id="wa-forecast"></div>
 <div id="wa-pill"></div>
-<script src="js/main.js"></script>
+<script src="vendor/three-weather.min.js?v=0.185.1-cached-atmosphere"></script>
+<script src="js/main.js?v=fallback-ladder-1"></script>
 <script src="js/atmosphere.js"></script>
-<script src="js/weather.js"></script>
-<script src="js/renderer.js"></script>
+<script src="js/weather.js?v=fallback-ladder-1"></script>
+<script src="js/three-renderer.js?v=fallback-ladder-1"></script>
+<script src="js/renderer.js?v=fallback-ladder-1"></script>
+<script src="js/static-fallback.js?v=fallback-ladder-1"></script>
 <script src="js/icons.js"></script>
-<script src="js/ui.js"></script>
-<script src="js/bootstrap.js"></script>
+<script src="js/ui.js?v=fallback-ladder-1"></script>
+<script src="js/bootstrap.js?v=fallback-ladder-1"></script>
 </body>
 </html>

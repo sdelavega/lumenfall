@@ -23,6 +23,9 @@ txt_path, md_path = sys.argv[1], sys.argv[2]
 wall_root = "app/src/main/assets/wallpapers"
 AETHERDESK = "https://github.com/sdelavega/AetherDesk"
 VENDORED = {"WeatherAether", "GradientWave", "MatrixRain", "NeonCity"}
+# Third-party components bundled inside a vendored wallpaper: folder -> (name, licence).
+# The licence text is found by walking the folder for a licence-named file.
+NESTED = {"WeatherAether": ("three.js", "MIT")}
 
 # (heading, [(name, version, licence, source)])
 sections = []
@@ -47,7 +50,14 @@ for folder in sorted(os.listdir(wall_root)):
         source = "https://github.com/sdelavega/lumenfall"
     lic = lic or "unspecified"
     files = sorted(n for n in os.listdir(d) if n.lower() in ("license", "license.txt", "license.md"))
-    walls.append((folder, title, author, lic, source, files[0] if files else ""))
+    nested = ""
+    if folder in NESTED:
+        nested_files = sorted(
+            os.path.relpath(os.path.join(r, n), d).replace(os.sep, "/")
+            for r, _, ns in os.walk(d) for n in ns
+            if "license" in n.lower() and os.path.relpath(r, d) != ".")
+        nested = (NESTED[folder][0], NESTED[folder][1], nested_files[0] if nested_files else "")
+    walls.append((folder, title, author, lic, source, files[0] if files else "", nested))
 
 # --- Crates ---------------------------------------------------------------
 meta = json.loads(os.environ["CARGO_JSON"])
@@ -74,12 +84,14 @@ android.sort()
 def txt():
     out = ["Lumenfall is licensed GPL-3.0-or-later. It bundles and links the following third-party work.", ""]
     out += ["BUNDLED WALLPAPERS", "=================="]
-    for folder, title, author, lic, source, lf in walls:
+    for folder, title, author, lic, source, lf, nested in walls:
         out.append(f"{title} [{folder}]")
         out.append(f"  Author: {author}")
         out.append(f"  License: {lic}" + (f" (see {folder}/{lf})" if lf else ""))
         if source:
             out.append(f"  Source: {source}")
+        if nested:
+            out.append(f"  Includes: {nested[0]} - {nested[1]}" + (f" (see {folder}/{nested[2]})" if nested[2] else ""))
         out.append("")
     out += ["RUST CRATES", "==========="]
     for n, v, l, r in crates:
@@ -95,7 +107,10 @@ def md():
            "Lumenfall is licensed GPL-3.0-or-later. It bundles and links the following third-party work.", "",
            "## Bundled wallpapers", "",
            "| Wallpaper | Folder | Author | Licence | Licence file | Source |", "|---|---|---|---|---|---|"]
-    for folder, title, author, lic, source, lf in walls:
+    for folder, title, author, lic, source, lf, nested in walls:
+        if nested:
+            lic = f"{lic}; includes {nested[0]} ({nested[1]})"
+            lf = lf or nested[2]
         out.append(f"| {title} | `{folder}` | {author} | {lic} | " + (f"`{folder}/{lf}`" if lf else "") + f" | {source} |")
     out += ["", "## Rust crates", "", "| Crate | Version | Licence | Repository |", "|---|---|---|---|"]
     for n, v, l, r in crates:

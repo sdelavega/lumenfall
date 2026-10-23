@@ -15,7 +15,7 @@ Lumenfall is licensed GPL-3.0-or-later. It bundles and links the following third
 | Matrix Rain | `MatrixRain` | ÆtherDesk | GPL-3.0-only |  | https://github.com/sdelavega/AetherDesk |
 | Neon City | `NeonCity` | Veles | MIT |  | https://github.com/sdelavega/AetherDesk |
 | Rainfall | `Rainfall` | Stephen de la Vega | GPL-3.0-or-later | `Rainfall/LICENSE.txt` | https://github.com/sdelavega/lumenfall |
-| Weather Aether | `WeatherAether` | ÆtherDesk | GPL-3.0-only |  | https://github.com/sdelavega/AetherDesk |
+| Weather Aether | `WeatherAether` | ÆtherDesk | GPL-3.0-only; includes three.js (MIT) | `WeatherAether/vendor/THREE-LICENSE.txt` | https://github.com/sdelavega/AetherDesk |
 
 ## Rust crates
 

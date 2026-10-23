@@ -41,6 +41,7 @@ Weather Aether [WeatherAether]
   Author: ÆtherDesk
   License: GPL-3.0-only
   Source: https://github.com/sdelavega/AetherDesk
+  Includes: three.js - MIT (see WeatherAether/vendor/THREE-LICENSE.txt)
 
 RUST CRATES
 ===========

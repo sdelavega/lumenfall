@@ -4,6 +4,7 @@
     "Title": "Matrix Rain",
     "Description": "Classic Matrix-style digital rain animation",
     "Author": "ÆtherDesk",
+    "License": "GPL-3.0-only",
     "Type": "web",
     "Manifest": ["index.html"]
 }

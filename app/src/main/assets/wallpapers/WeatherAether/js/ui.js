@@ -139,6 +139,10 @@ function hidePill(){
 //   showParticles change → rebuild particle pool
 function applyProps(props){
   var needLoc=false,needRefresh=false;
+  if((props.renderer==='auto'||props.renderer==='classic')&&props.renderer!==S.props.renderer){
+    S.props.renderer=props.renderer;
+    applyRendererPreference();
+  }
   if(props.locationMode!==undefined&&props.locationMode!==S.props.locationMode){
     S.props.locationMode=props.locationMode;needLoc=true;
   }
