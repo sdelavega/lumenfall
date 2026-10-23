@@ -424,7 +424,33 @@ class MainActivity : AppCompatActivity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setPadding(0, dp(8), 0, 0)
         })
+        column.addView(aboutLink("Open-source licences") { showLicences() })
+        column.addView(aboutLink("Donate") { openDonatePage() })
         return column
+    }
+
+    private fun aboutLink(label: String, onClick: () -> Unit): TextView =
+        TextView(this).apply {
+            text = label
+            setTextColor(getColor(R.color.glass_accent))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setPadding(0, dp(14), 0, dp(4))
+            isClickable = true
+            setOnClickListener { onClick() }
+        }
+
+    private fun showLicences() {
+        val text = runCatching {
+            assets.open("licenses/third_party.txt").bufferedReader().use { it.readText() }
+        }.getOrElse { "The licence notices could not be loaded." }
+        GlassUi.messageDialog(this, title = "Open-source licences", message = text, scrollable = true)
+    }
+
+    private fun openDonatePage() {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/sponsors/sdelavega"))
+        runCatching { startActivity(intent) }.onFailure {
+            GlassUi.messageDialog(this, title = "Donate", message = "No browser is available to open https://github.com/sponsors/sdelavega")
+        }
     }
 
     /** File path (or `asset:` path) of the thumbnail to show, or null when there is none yet. */

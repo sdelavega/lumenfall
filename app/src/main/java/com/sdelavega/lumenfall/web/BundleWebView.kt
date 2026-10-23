@@ -217,7 +217,7 @@ object BundleWebView {
             }
             networkPolicies[this] = networkPolicy
         }
-        if (docStartSupported) {
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             WebViewCompat.addDocumentStartJavaScript(wv, shim, setOf(APP_ORIGIN))
         }
         return wv

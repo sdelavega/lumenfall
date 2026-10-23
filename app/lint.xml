@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 Stephen de la Vega -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Lint runs with warningsAsErrors, so every ignore below is a deliberate
+     decision with its reason. Do not add an ignore without one. Nothing
+     security-relevant is ignored without naming the mitigation that covers it. -->
+<lint>
+    <!-- Dependencies: pinned for reproducible builds; Dependabot proposes updates. -->
+    <issue id="GradleDependency" severity="ignore" />
+    <issue id="NewerVersionAvailable" severity="ignore" />
+
+    <!-- arm64-v8a only by design (minSdk 33 devices are all 64-bit ARM; Apple-Silicon
+         emulators use the arm64 image). A ChromeOS x86_64 build is not a goal for 1.0. -->
+    <issue id="ChromeOsAbiSupport" severity="ignore" />
+
+    <!-- The UI is built programmatically in English only for 1.0; extracting every
+         label into string resources for translation is out of scope for this release. -->
+    <issue id="SetTextI18n" severity="ignore" />
+
+    <!-- Style preference only: the plain platform calls are equally correct, and
+         rewriting working code to KTX forms adds churn without changing behaviour. -->
+    <issue id="UseKtx" severity="ignore" />
+
+    <!-- WebView JavaScript is the product: wallpapers are HTML/JS bundles. Mitigation:
+         the WebView serves only a virtual https origin with no file/content access, every
+         non-local request goes through WallpaperNetworkPolicy (SSRF, tracker and
+         miner-domain blocking, WebSocket guard), and the bridge shim and the
+         JavascriptInterface surface are fixed and tested (ShimAssetTest,
+         WallpaperNetworkPolicyTest). -->
+    <issue id="SetJavaScriptEnabled" severity="ignore">
+        <ignore path="**/web/BundleWebView.kt" />
+    </issue>
+
+    <!-- WebViewTimers: pendingWebView is a transient hand-off to a debounced runnable
+         and is nulled as soon as it runs; the object is the single process-wide owner of
+         WebView.pauseTimers()/resumeTimers(), a process-global WebView latch. -->
+    <issue id="StaticFieldLeak">
+        <ignore path="**/web/WebViewTimers.kt" />
+        <!-- BundleThumbnailer.Target holds context.applicationContext only (see
+             generateMissing), and is cleared when the queue goes idle. -->
+        <ignore path="**/web/BundleThumbnailer.kt" />
+    </issue>
+
+    <!-- SplitPaneLayout's divider is a drag handle, not a button: there is no click
+         action to perform. Keyboard/TalkBack users resize through the divider's
+         AccessibilityDelegate (widen/narrow actions). -->
+    <issue id="ClickableViewAccessibility" severity="ignore">
+        <ignore path="**/ui/SplitPaneLayout.kt" />
+    </issue>
+</lint>

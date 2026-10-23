@@ -55,3 +55,7 @@ sync-wallpapers ref:
 # Check the vendored wallpapers against wallpapers.lock.
 wallpapers-lock:
     ./gradlew :app:testDebugUnitTest --tests '*VendoredWallpapersLockTest*' --console=plain
+
+# Regenerate THIRD_PARTY.md and the in-app licences asset from wallpapers + Cargo.lock.
+licenses:
+    scripts/gen-licenses.sh

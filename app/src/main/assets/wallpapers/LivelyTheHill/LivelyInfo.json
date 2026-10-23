@@ -5,7 +5,7 @@
   "Preview": "lively_p.gif",
   "Desc": "Shader generated hill.",
   "Author": "Yoichi Kobayashi",
-  "License": null,
+  "License": "MIT",
   "Contact": "https://codepen.io/ykob/pen/aBrjaR",
   "Type": 1,
   "FileName": "index.html",

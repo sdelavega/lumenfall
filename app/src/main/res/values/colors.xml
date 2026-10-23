@@ -12,7 +12,6 @@
     <color name="glass_panel_inner_glow">#1EFFFFFF</color>
     <color name="glass_panel_lift_shadow">#30071118</color>
     <color name="glass_panel_frost">#18FFFFFF</color>
-    <color name="glass_panel_cloud">#12FFFFFF</color>
 
     <color name="glass_field_fill">#6046535F</color>
     <color name="glass_field_stroke">#28DCEAF0</color>
@@ -20,7 +19,6 @@
     <color name="glass_track_inactive">#4A5D6C78</color>
     <color name="glass_accent">#4B9CD3</color>
     <color name="glass_accent_dim">#334B9CD3</color>
-    <color name="glass_accent_soft">#254B9CD3</color>
     <color name="glass_accent_haze">#184B9CD3</color>
     <color name="glass_accent_tab_top">#664B9CD3</color>
     <color name="glass_accent_tab_bottom">#2E4B9CD3</color>

@@ -62,9 +62,8 @@ struct RawLivelyInfo {
     homepage: Option<String>,
     tags: Option<Vec<String>>,
     release_date: Option<String>,
-    // AppVersion is the Lively schema version; Version is the bundle's own
-    // version string. Both are surfaced so a future picker can show either.
-    app_version: Option<String>,
+    // Version is the bundle's own version string. (AppVersion, the Lively
+    // schema version, is deliberately not read.)
     version: Option<RawVersion>,
     #[serde(rename = "Type", alias = "type")]
     wallpaper_type: Option<RawType>,

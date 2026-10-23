@@ -5,7 +5,7 @@
   "Preview": "lively_p.gif",
   "Desc": "Triangle pattern generator with light that follow cursor.",
   "Author": "Maksim Surguy",
-  "License": null,
+  "License": "MIT",
   "Contact": "https://codepen.io/msurguy/pen/sbIio",
   "Type": 1,
   "FileName": "triangle.html",

@@ -1,0 +1,96 @@
+Lumenfall is licensed GPL-3.0-or-later. It bundles and links the following third-party work.
+
+BUNDLED WALLPAPERS
+==================
+Gradient Wave [GradientWave]
+  Author: ÆtherDesk
+  License: GPL-3.0-only
+  Source: https://github.com/sdelavega/AetherDesk
+
+Fluids [LivelyFluids]
+  Author: PavelDoGreat
+  License: MIT (see LivelyFluids/LICENSE.txt)
+  Source: https://github.com/rocksdanister/WebGL-Fluid-Simulation
+
+The Hill [LivelyTheHill]
+  Author: Yoichi Kobayashi
+  License: MIT (see LivelyTheHill/license.txt)
+  Source: https://codepen.io/ykob/pen/aBrjaR
+
+Triangles & Light [LivelyTrianglesLight]
+  Author: Maksim Surguy
+  License: MIT (see LivelyTrianglesLight/license.txt)
+  Source: https://codepen.io/msurguy/pen/sbIio
+
+Matrix Rain [MatrixRain]
+  Author: ÆtherDesk
+  License: GPL-3.0-only
+  Source: https://github.com/sdelavega/AetherDesk
+
+Neon City [NeonCity]
+  Author: Veles
+  License: MIT
+  Source: https://github.com/sdelavega/AetherDesk
+
+Rainfall [Rainfall]
+  Author: Stephen de la Vega
+  License: GPL-3.0-or-later (see Rainfall/LICENSE.txt)
+  Source: https://github.com/sdelavega/Lumenfall
+
+Weather Aether [WeatherAether]
+  Author: ÆtherDesk
+  License: GPL-3.0-only
+  Source: https://github.com/sdelavega/AetherDesk
+
+RUST CRATES
+===========
+bytes 1.12.0 - MIT - https://github.com/tokio-rs/bytes
+cesu8 1.1.0 - Apache-2.0/MIT - https://github.com/emk/cesu8-rs
+cfg-if 1.0.4 - MIT OR Apache-2.0 - https://github.com/rust-lang/cfg-if
+combine 4.6.7 - MIT - https://github.com/Marwes/combine
+itoa 1.0.18 - MIT OR Apache-2.0 - https://github.com/dtolnay/itoa
+jni 0.21.1 - MIT/Apache-2.0 - https://github.com/jni-rs/jni-rs
+jni-sys 0.3.1 - MIT OR Apache-2.0 - https://github.com/jni-rs/jni-sys
+jni-sys 0.4.1 - MIT OR Apache-2.0 - https://github.com/jni-rs/jni-sys
+jni-sys-macros 0.4.1 - MIT OR Apache-2.0 - https://github.com/jni-rs/jni-sys
+log 0.4.33 - MIT OR Apache-2.0 - https://github.com/rust-lang/log
+memchr 2.8.2 - Unlicense OR MIT - https://github.com/BurntSushi/memchr
+proc-macro2 1.0.106 - MIT OR Apache-2.0 - https://github.com/dtolnay/proc-macro2
+quote 1.0.46 - MIT OR Apache-2.0 - https://github.com/dtolnay/quote
+same-file 1.0.6 - Unlicense/MIT - https://github.com/BurntSushi/same-file
+serde 1.0.228 - MIT OR Apache-2.0 - https://github.com/serde-rs/serde
+serde_core 1.0.228 - MIT OR Apache-2.0 - https://github.com/serde-rs/serde
+serde_derive 1.0.228 - MIT OR Apache-2.0 - https://github.com/serde-rs/serde
+serde_json 1.0.150 - MIT OR Apache-2.0 - https://github.com/serde-rs/json
+syn 2.0.118 - MIT OR Apache-2.0 - https://github.com/dtolnay/syn
+thiserror 1.0.69 - MIT OR Apache-2.0 - https://github.com/dtolnay/thiserror
+thiserror 2.0.18 - MIT OR Apache-2.0 - https://github.com/dtolnay/thiserror
+thiserror-impl 1.0.69 - MIT OR Apache-2.0 - https://github.com/dtolnay/thiserror
+thiserror-impl 2.0.18 - MIT OR Apache-2.0 - https://github.com/dtolnay/thiserror
+unicode-ident 1.0.24 - (MIT OR Apache-2.0) AND Unicode-3.0 - https://github.com/dtolnay/unicode-ident
+walkdir 2.5.0 - Unlicense/MIT - https://github.com/BurntSushi/walkdir
+winapi-util 0.1.11 - Unlicense OR MIT - https://github.com/BurntSushi/winapi-util
+windows-link 0.2.1 - MIT OR Apache-2.0 - https://github.com/microsoft/windows-rs
+windows-sys 0.45.0 - MIT OR Apache-2.0 - https://github.com/microsoft/windows-rs
+windows-sys 0.61.2 - MIT OR Apache-2.0 - https://github.com/microsoft/windows-rs
+windows-targets 0.42.2 - MIT OR Apache-2.0 - https://github.com/microsoft/windows-rs
+windows_aarch64_gnullvm 0.42.2 - MIT OR Apache-2.0 - https://github.com/microsoft/windows-rs
+windows_aarch64_msvc 0.42.2 - MIT OR Apache-2.0 - https://github.com/microsoft/windows-rs
+windows_i686_gnu 0.42.2 - MIT OR Apache-2.0 - https://github.com/microsoft/windows-rs
+windows_i686_msvc 0.42.2 - MIT OR Apache-2.0 - https://github.com/microsoft/windows-rs
+windows_x86_64_gnu 0.42.2 - MIT OR Apache-2.0 - https://github.com/microsoft/windows-rs
+windows_x86_64_gnullvm 0.42.2 - MIT OR Apache-2.0 - https://github.com/microsoft/windows-rs
+windows_x86_64_msvc 0.42.2 - MIT OR Apache-2.0 - https://github.com/microsoft/windows-rs
+zmij 1.0.21 - MIT - https://github.com/dtolnay/zmij
+
+ANDROID LIBRARIES
+=================
+androidx.activity:activity-ktx - Apache-2.0
+androidx.appcompat:appcompat - Apache-2.0
+androidx.core:core-ktx - Apache-2.0
+androidx.media3:media3-exoplayer - Apache-2.0
+androidx.media3:media3-ui - Apache-2.0
+androidx.recyclerview:recyclerview - Apache-2.0
+androidx.webkit:webkit - Apache-2.0
+com.google.android.material:material - Apache-2.0
+org.jetbrains.kotlin:kotlin-stdlib - Apache-2.0

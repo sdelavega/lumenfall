@@ -561,7 +561,7 @@ class BundleSettingsActivity : AppCompatActivity() {
         val steps = maxOf(1, ((max - min) / step).roundToInt())
         val snappedMax = min + steps * step // Slider requires an evenly divisible range
         val cur = ((current as? Number)?.toDouble() ?: min).coerceIn(min, snappedMax)
-        fun fmt(v: Double) = if (integral) v.roundToLong().toString() else String.format("%.2f", v)
+        fun fmt(v: Double) = if (integral) v.roundToLong().toString() else String.format(java.util.Locale.ROOT, "%.2f", v)
 
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL

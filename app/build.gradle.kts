@@ -60,7 +60,9 @@ android {
     }
 
     lint {
+        warningsAsErrors = true
         abortOnError = true
+        lintConfig = file("lint.xml")
     }
 
     signingConfigs {

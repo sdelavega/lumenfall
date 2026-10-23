@@ -20,6 +20,7 @@ import android.view.Window
 import android.widget.ArrayAdapter
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 import androidx.appcompat.widget.SwitchCompat
@@ -244,7 +245,13 @@ object GlassUi {
     }
 
     /** Persistent informational dialog for errors that should not vanish like a toast. */
-    fun messageDialog(context: Context, title: String, message: String, buttonText: String = "OK") {
+    fun messageDialog(
+        context: Context,
+        title: String,
+        message: String,
+        buttonText: String = "OK",
+        scrollable: Boolean = false
+    ) {
         val dialog = Dialog(context)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
@@ -258,12 +265,26 @@ object GlassUi {
             setTextColor(context.getColor(R.color.glass_text_primary))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
         })
-        content.addView(TextView(context).apply {
+        val messageView = TextView(context).apply {
             text = message
             setTextColor(context.getColor(R.color.glass_text_secondary))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setPadding(0, dp(context, 8), 0, 0)
-        })
+        }
+        if (scrollable) {
+            // Long text (licences): cap the body at 60% of the screen height and scroll within it.
+            val maxBody = (context.resources.displayMetrics.heightPixels * 0.6f).toInt()
+            content.addView(object : ScrollView(context) {
+                override fun onMeasure(widthSpec: Int, heightSpec: Int) {
+                    super.onMeasure(
+                        widthSpec,
+                        MeasureSpec.makeMeasureSpec(maxBody, MeasureSpec.AT_MOST)
+                    )
+                }
+            }.apply { addView(messageView) })
+        } else {
+            content.addView(messageView)
+        }
         content.addView(LinearLayout(context).apply {
             gravity = Gravity.END
             setPadding(0, dp(context, 20), 0, 0)

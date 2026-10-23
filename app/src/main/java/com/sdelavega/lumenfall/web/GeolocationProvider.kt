@@ -8,7 +8,6 @@ import android.location.Geocoder
 import android.util.Log
 import android.location.Location
 import android.location.LocationManager
-import android.os.Build
 import android.os.CancellationSignal
 import android.os.Handler
 import android.os.Looper
@@ -101,22 +100,11 @@ class GeolocationProvider(private val context: Context) {
         main.postDelayed(timeout, timeoutMs.toLong())
 
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                manager.getCurrentLocation(
-                    provider,
-                    signal,
-                    ContextCompat.getMainExecutor(context)
-                ) { loc -> onLocation(loc, startedAt, resolved, timeout, onResult) }
-            } else {
-                @Suppress("DEPRECATION")
-                manager.requestSingleUpdate(provider, object : android.location.LocationListener {
-                    override fun onLocationChanged(location: Location) =
-                        onLocation(location, startedAt, resolved, timeout, onResult)
-                    override fun onStatusChanged(p: String?, s: Int, b: android.os.Bundle?) {}
-                    override fun onProviderEnabled(p: String) {}
-                    override fun onProviderDisabled(p: String) {}
-                }, Looper.getMainLooper())
-            }
+            manager.getCurrentLocation(
+                provider,
+                signal,
+                ContextCompat.getMainExecutor(context)
+            ) { loc -> onLocation(loc, startedAt, resolved, timeout, onResult) }
         } catch (t: SecurityException) {
             main.removeCallbacks(timeout)
             if (resolved.compareAndSet(false, true)) {
