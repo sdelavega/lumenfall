@@ -293,6 +293,7 @@ class WallpaperWebViewHost(
             onLog("deep-sleep: surface has no size; tore down without snapshot")
             return
         }
+        val generation = deepSleepScheduler.visibilityGeneration
         // Allocate immediately before the request (~16 MB at full-screen size)
         // and recycle on every path that doesn't hand it to drawSnapshot.
         var bitmap: Bitmap? = null
@@ -300,6 +301,13 @@ class WallpaperWebViewHost(
             val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
             bitmap = bmp
             PixelCopy.request(holder.surface, bmp, { result ->
+                if (generation != deepSleepScheduler.visibilityGeneration) {
+                    // Shown (or re-hidden) while the copy ran: the live wallpaper must
+                    // keep running, and a re-hide has armed its own deep-sleep timer.
+                    bmp.recycle()
+                    onLog("deep-sleep: abandoned (visibility changed during snapshot)")
+                    return@request
+                }
                 detach()
                 if (result == PixelCopy.SUCCESS) {
                     drawSnapshot(holder, bmp) // recycles bmp when finished

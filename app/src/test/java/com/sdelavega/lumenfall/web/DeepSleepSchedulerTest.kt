@@ -64,4 +64,22 @@ class DeepSleepSchedulerTest {
         assertEquals(0, pending)
         assertEquals(1, scheduledCount)
     }
+
+    @Test
+    fun visibilityGenerationChangesOnEveryVisibilityReport() {
+        val g0 = scheduler.visibilityGeneration
+        scheduler.onVisibilityChanged(false)
+        val g1 = scheduler.visibilityGeneration
+        scheduler.onVisibilityChanged(true)
+        val g2 = scheduler.visibilityGeneration
+        assertTrue(g0 != g1 && g1 != g2 && g0 != g2)
+    }
+
+    @Test
+    fun performanceChangeDoesNotInvalidateAnInFlightSnapshot() {
+        scheduler.onVisibilityChanged(false)
+        val g = scheduler.visibilityGeneration
+        scheduler.onPerformanceChanged()
+        assertEquals(g, scheduler.visibilityGeneration)
+    }
 }

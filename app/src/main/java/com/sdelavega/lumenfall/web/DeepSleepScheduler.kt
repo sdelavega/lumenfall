@@ -20,7 +20,16 @@ class DeepSleepScheduler(
     var isHidden: Boolean = false
         private set
 
+    /**
+     * Bumped on every visibility report. A snapshot started for deep sleep captures
+     * it and must abandon its teardown when it no longer matches: the wallpaper
+     * was shown (or re-hidden) while PixelCopy was still running.
+     */
+    var visibilityGeneration: Int = 0
+        private set
+
     fun onVisibilityChanged(visible: Boolean) {
+        visibilityGeneration++
         isHidden = !visible
         cancel()
         if (!visible) schedule(delayMs(), onDeepSleep)

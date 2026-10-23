@@ -15,6 +15,7 @@ import android.media.MediaMetadataRetriever
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.Display
 import android.view.ViewGroup
 import android.webkit.WebView
@@ -51,6 +52,7 @@ import kotlin.concurrent.thread
  */
 object BundleThumbnailer {
 
+    private const val TAG = "BundleThumbnailer"
     private const val THUMB_NAME = ".lumenfall-thumb.jpg"
     private const val FAILED_MARKER = ".lumenfall-thumb-failed"
 
@@ -113,15 +115,27 @@ object BundleThumbnailer {
         if (t == null || meta == null || !needsThumbnail(t.app, t.store, meta)) {
             done(); return
         }
-        generate(t.app, t.store, meta) { updated ->
-            // Advance the queue first; progress (which may re-enter
-            // generateMissing) runs outside any queue state mutation.
-            done()
-            // Drop the captured callback (it may hold a destroyed Activity)
-            // once nothing is left to run.
-            if (queue.idle) target = null
-            if (updated != null) t.onProgress()
-        }
+        // Whatever generate() throws (WebView construction can fail while the
+        // WebView provider updates) must not reach the main-thread caller: mark the
+        // bundle failed, log, and advance.
+        runJobSafely(
+            work = {
+                generate(t.app, t.store, meta) { updated ->
+                    // Advance the queue first; progress (which may re-enter
+                    // generateMissing) runs outside any queue state mutation.
+                    done()
+                    // Drop the captured callback (it may hold a destroyed Activity)
+                    // once nothing is left to run.
+                    if (queue.idle) target = null
+                    if (updated != null) t.onProgress()
+                }
+            },
+            onFailure = { e ->
+                Log.w(TAG, "thumbnail for ${meta.id} failed", e)
+                markFailed(t.app, t.store, meta)
+            },
+            done = done
+        )
     }
 
     /**

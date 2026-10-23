@@ -3,6 +3,21 @@
 package com.sdelavega.lumenfall.web
 
 /**
+ * Run one queue job so that nothing it throws escapes to the main-thread caller (a
+ * rethrow from the queue's `done` path would crash the whole app, e.g. when WebView
+ * construction fails during a WebView provider update): [onFailure] gets the
+ * throwable, and [done] always runs so the queue advances.
+ */
+internal fun runJobSafely(work: () -> Unit, onFailure: (Throwable) -> Unit, done: () -> Unit) {
+    try {
+        work()
+    } catch (t: Throwable) {
+        runCatching { onFailure(t) }
+        done()
+    }
+}
+
+/**
  * Serial work queue for thumbnail generation: exactly one [worker] call is in
  * flight at a time, and its `done` callback starts the next.
  *

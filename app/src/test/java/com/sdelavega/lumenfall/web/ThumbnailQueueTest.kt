@@ -114,4 +114,21 @@ class ThumbnailQueueTest {
         assertEquals(listOf("a", "b"), started)
         assertEquals(true, queue.idle)
     }
+
+    @Test
+    fun runJobSafelyContainsAThrowingWorkerAndStillAdvances() {
+        val failures = mutableListOf<Throwable>()
+        val started = mutableListOf<String>()
+        val queue = ThumbnailQueue { id, done ->
+            runJobSafely(
+                work = { started += id; if (id == "a") error("webview exploded") else done() },
+                onFailure = { failures += it },
+                done = done
+            )
+        }
+        queue.enqueue(listOf("a", "b"))   // must not throw
+        assertEquals(listOf("a", "b"), started)
+        assertEquals(listOf("webview exploded"), failures.map { it.message })
+        assertEquals(true, queue.idle)
+    }
 }
