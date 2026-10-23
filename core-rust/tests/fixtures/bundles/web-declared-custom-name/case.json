@@ -1,0 +1,14 @@
+{
+  "base_path": "LivelyTrianglesLight",
+  "files": [
+    { "path": "LivelyTrianglesLight/LivelyInfo.json", "size": 96 },
+    { "path": "LivelyTrianglesLight/triangle.html", "size": 2048 }
+  ],
+  "expected": {
+    "ok": true,
+    "kind": "web",
+    "entry_path": "LivelyTrianglesLight/triangle.html",
+    "preview_path": null,
+    "error_contains": null
+  }
+}

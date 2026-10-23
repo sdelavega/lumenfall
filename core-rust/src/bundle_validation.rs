@@ -12,6 +12,7 @@ const MAX_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_SINGLE_FILE_BYTES: u64 = 256 * 1024 * 1024;
 
 const WEB_ENTRIES: &[&str] = &["index.html", "index.htm"];
+const WEB_EXTENSIONS: &[&str] = &["html", "htm"];
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mov", "m4v", "webm", "mkv"];
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif", "bmp"];
 const PREVIEW_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif"];
@@ -123,7 +124,7 @@ fn validate(info: LivelyInfo, base_path: &str, files: Vec<BundleFile>) -> Bundle
 fn resolve_entry(info: &LivelyInfo, base_path: &str, files: &BTreeSet<String>) -> Option<String> {
     if let Some(name) = info.file_name.as_deref() {
         return resolve_declared_file(base_path, name, files)
-            .filter(|path| kind_supports_path(info.kind, path));
+            .filter(|path| declared_kind_supports_path(info.kind, path));
     }
 
     let candidates = files.iter().filter(|path| {
@@ -168,11 +169,11 @@ fn resolve_declared_file(
     files.contains(&normalized).then_some(normalized)
 }
 
-fn kind_supports_path(kind: WallpaperKind, path: &str) -> bool {
+/// A declared entry is trusted for its name; web entries only need an HTML
+/// extension (Lively bundles commonly declare names other than `index.html`).
+fn declared_kind_supports_path(kind: WallpaperKind, path: &str) -> bool {
     match kind {
-        WallpaperKind::Web => WEB_ENTRIES
-            .iter()
-            .any(|entry| file_name(path).eq_ignore_ascii_case(entry)),
+        WallpaperKind::Web => has_extension(path, WEB_EXTENSIONS),
         WallpaperKind::Video => has_extension(path, VIDEO_EXTENSIONS),
         WallpaperKind::Image => has_extension(path, IMAGE_EXTENSIONS),
         WallpaperKind::Unsupported => false,
@@ -310,6 +311,47 @@ mod tests {
         assert_eq!(response.kind, "web");
         assert_eq!(response.entry_path.as_deref(), Some("index.html"));
         assert_eq!(response.preview_path.as_deref(), Some("preview.gif"));
+    }
+
+    #[test]
+    fn declared_web_entry_with_custom_name_is_accepted() {
+        let response = validate_ok(
+            r#"{"Title":"Triangles","Type":1,"FileName":"triangle.html"}"#,
+            "LivelyTrianglesLight",
+            &[
+                "LivelyTrianglesLight/LivelyInfo.json",
+                "LivelyTrianglesLight/triangle.html",
+            ],
+        );
+
+        assert!(response.ok, "{:?}", response.error);
+        assert_eq!(
+            response.entry_path.as_deref(),
+            Some("LivelyTrianglesLight/triangle.html")
+        );
+    }
+
+    #[test]
+    fn declared_web_entry_must_be_html() {
+        let response = validate_ok(
+            r#"{"Title":"Bad","Type":1,"FileName":"script.js"}"#,
+            "",
+            &["LivelyInfo.json", "script.js"],
+        );
+
+        assert!(!response.ok);
+    }
+
+    #[test]
+    fn declared_web_entry_case_insensitive_extension() {
+        let response = validate_ok(
+            r#"{"Title":"Upper","Type":1,"FileName":"Main.HTML"}"#,
+            "",
+            &["LivelyInfo.json", "Main.HTML"],
+        );
+
+        assert!(response.ok, "{:?}", response.error);
+        assert_eq!(response.entry_path.as_deref(), Some("Main.HTML"));
     }
 
     #[test]
