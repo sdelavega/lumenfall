@@ -160,6 +160,7 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.webkit:webkit:1.12.1")
+    implementation("androidx.recyclerview:recyclerview:1.4.0")
     implementation("androidx.media3:media3-exoplayer:1.7.1")
     implementation("androidx.media3:media3-ui:1.7.1")
 

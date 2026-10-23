@@ -120,7 +120,7 @@ class LumenfallWallpaperService : WallpaperService() {
             (renderer as? WallpaperWebViewHost)?.applyPerformance(settings, currentScreeningFpsCap)
         }
 
-        /** Pick a renderer for the active bundle's kind, falling back to the spike. */
+        /** Pick a renderer for the active bundle's kind, falling back to the placeholder page. */
         private fun createRenderer(): WallpaperRenderer {
             val service = this@LumenfallWallpaperService
             val store = BundleStore(service)
@@ -140,7 +140,7 @@ class LumenfallWallpaperService : WallpaperService() {
             }
         }
 
-        /** Web bundle (or the baked-in spike when none is selected). */
+        /** Web bundle (or the baked-in placeholder page when none is selected). */
         private fun webRenderer(active: BundleMeta?): WallpaperRenderer {
             val service = this@LumenfallWallpaperService
             val store = BundleStore(service)
@@ -155,8 +155,8 @@ class LumenfallWallpaperService : WallpaperService() {
                     "$APP_ORIGIN/bundles/${webBundle.id}/${webBundle.entryPath}"
                 }
             } else {
-                Log.d(TAG, "no renderable bundle; loading default spike")
-                SPIKE_BUNDLE_URL
+                Log.d(TAG, "no renderable bundle; loading placeholder")
+                PLACEHOLDER_URL
             }
             val props = webBundle?.let { store.effectiveValues(it.id).toString() } ?: "{}"
             // Practical limits from import screening. Bundles without a report
@@ -228,6 +228,6 @@ class LumenfallWallpaperService : WallpaperService() {
         const val APP_ORIGIN = "https://appassets.androidplatform.net"
 
         /** Bundled test wallpaper, the default when no web bundle is selected. */
-        const val SPIKE_BUNDLE_URL = "$APP_ORIGIN/assets/spike/webgl.html"
+        const val PLACEHOLDER_URL = "$APP_ORIGIN/assets/placeholder/index.html"
     }
 }

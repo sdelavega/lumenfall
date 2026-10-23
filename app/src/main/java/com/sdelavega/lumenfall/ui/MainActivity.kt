@@ -7,8 +7,6 @@ import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Intent
 import android.content.res.Configuration
-import android.graphics.BitmapFactory
-import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
@@ -19,9 +17,10 @@ import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.AdapterView
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import android.widget.Spinner
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -39,6 +38,7 @@ import com.sdelavega.lumenfall.storage.BundledWallpapers
 import com.sdelavega.lumenfall.storage.PerformanceSettings
 import com.sdelavega.lumenfall.web.BundleThumbnailer
 import com.sdelavega.lumenfall.web.ContactedDomains
+import java.io.File
 import kotlin.concurrent.thread
 
 /**
@@ -53,8 +53,20 @@ class MainActivity : AppCompatActivity() {
 
     private val store by lazy { BundleStore(this) }
     private val settingsStore by lazy { AppSettingsStore(this) }
-    private lateinit var listContainer: LinearLayout
-    private var libraryScroll: ScrollView? = null
+    private lateinit var libraryList: RecyclerView
+    private lateinit var emptyLibraryText: TextView
+    private val bundleAdapter by lazy {
+        BundleListAdapter(
+            onSelect = { id -> store.get(id)?.let(::setActiveAndPreview) },
+            onSettings = { id ->
+                startActivity(
+                    Intent(this, BundleSettingsActivity::class.java)
+                        .putExtra(BundleSettingsActivity.EXTRA_BUNDLE_ID, id)
+                )
+            },
+            onDelete = { id -> store.get(id)?.let(::confirmDelete) }
+        )
+    }
     private var libraryPane: View? = null
     private var settingsPane: View? = null
     private var content: SplitPaneLayout? = null
@@ -63,6 +75,16 @@ class MainActivity : AppCompatActivity() {
     private var performanceTabButton: View? = null
     private var aboutTabButton: View? = null
     private var pendingImportedId: String? = null
+    private var pendingActivationTitle: String? = null
+
+    // System live-wallpaper chooser. Resulting toast only if the user really
+    // ended up with Lumenfall as the live wallpaper (they may have cancelled).
+    private val wallpaperChooser =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            val title = pendingActivationTitle
+            pendingActivationTitle = null
+            if (title != null && isLumenfallLiveWallpaper()) toast("Now live: $title")
+        }
 
     // SAF document picker. content:// URIs need no storage permission.
     private val openDoc =
@@ -101,19 +123,27 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(18), 0, dp(18), 0)
             layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, dp(44))
         }
-        listContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val scroll = ScrollView(this).apply {
-            addView(listContainer)
+        libraryList = RecyclerView(this).apply {
+            layoutManager = LinearLayoutManager(this@MainActivity)
+            adapter = bundleAdapter
+            itemAnimator = null
+            clipToPadding = false
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f).apply { topMargin = dp(12) }
         }
-        libraryScroll = scroll
+        emptyLibraryText = TextView(this).apply {
+            text = "No bundles yet. Import a Lively .zip to get started."
+            setTextColor(getColor(R.color.glass_text_secondary))
+            setPadding(0, dp(24), 0, 0)
+            visibility = View.GONE
+        }
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(LinearLayout(this@MainActivity).apply {
                 gravity = Gravity.START
                 addView(importButton)
             })
-            addView(scroll)
+            addView(emptyLibraryText)
+            addView(libraryList)
         }
     }
 
@@ -199,100 +229,61 @@ class MainActivity : AppCompatActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         relayout()
-        libraryScroll?.post { snapLibraryScrollToNearestRow() }
+        libraryList.post { snapLibraryScrollToNearestRow() }
     }
 
     override fun onResume() {
         super.onResume()
         refresh()
-        libraryScroll?.postDelayed({ snapLibraryScrollToNearestRow() }, 200)
+        libraryList.postDelayed({ snapLibraryScrollToNearestRow() }, 200)
     }
 
     private fun refresh() {
-        listContainer.removeAllViews()
         val bundles = store.list()
         val activeId = store.activeId
-        if (bundles.isEmpty()) {
-            listContainer.addView(TextView(this).apply {
-                text = "No bundles yet. Import a Lively .zip to get started."
-                setTextColor(getColor(R.color.glass_text_secondary))
-                setPadding(0, dp(24), 0, 0)
-            })
-            return
-        }
-        var importedView: View? = null
+        val rows = bundles.map { rowFor(it, it.id == activeId) }
+        emptyLibraryText.visibility = if (rows.isEmpty()) View.VISIBLE else View.GONE
+        libraryList.visibility = if (rows.isEmpty()) View.GONE else View.VISIBLE
         val importedId = pendingImportedId
-        bundles.forEach { meta ->
-            val panel = GlassUi.panel(this, rowFor(meta, meta.id == activeId), bottomMarginDp = 10)
-            listContainer.addView(panel)
-            if (meta.id == importedId) importedView = panel
-        }
-        if (importedView != null) {
-            libraryScroll?.post {
-                importedView?.let { libraryScroll?.smoothScrollTo(0, it.top) }
+        bundleAdapter.submitList(rows) {
+            if (importedId != null) {
+                val index = rows.indexOfFirst { it.id == importedId }
+                if (index >= 0) libraryList.smoothScrollToPosition(index)
             }
-            pendingImportedId = null
         }
+        if (importedId != null) pendingImportedId = null
         // Backfill thumbnails for bundles that didn't declare a preview image;
         // each one that lands re-renders the list so its tile fills in.
-        BundleThumbnailer.generateMissing(this, store) { if (!isDestroyed) refresh() }
+        if (rows.isNotEmpty()) BundleThumbnailer.generateMissing(this, store) { if (!isDestroyed) refresh() }
     }
 
-    private fun rowFor(meta: BundleMeta, isActive: Boolean): View {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            isClickable = true
-            setOnClickListener { setActiveAndPreview(meta) }
-            // Bundled wallpapers can't be deleted — they ship with the app.
-            setOnLongClickListener {
-                if (!BundledWallpapers.isBundled(meta.id)) {
-                    confirmDelete(meta); true
-                } else false
-            }
+    private fun rowFor(meta: BundleMeta, isActive: Boolean): BundleRow {
+        val renderable = meta.kind in RENDERABLE_KINDS
+        val subtitle = buildString {
+            append(meta.kind)
+            meta.author?.let { append("  •  ").append(it) }
+            if (!renderable) append("   (not supported)")
         }
-
-        row.addView(ImageView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(72), dp(72))
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            setBackgroundColor(Color.rgb(16, 24, 40))
-            loadPreview(meta)?.let(::setImageBitmap)
-        })
-
-        row.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), 0, 0, 0)
-            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
-            addView(TextView(context).apply {
-                text = if (isActive) "● ${meta.title}" else meta.title
-                setTextColor(getColor(R.color.glass_text_primary))
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-            })
-            val renderable = meta.kind in RENDERABLE_KINDS
-            val sub = buildString {
-                append(meta.kind)
-                meta.author?.let { append("  •  ").append(it) }
-                if (!renderable) append("   (not supported)")
-            }
-            addView(TextView(context).apply {
-                text = sub
-                setTextColor(if (renderable) getColor(R.color.glass_text_secondary) else getColor(R.color.glass_danger))
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            })
-        })
-
-        // Bundles with LivelyProperties expose a settings entry point; so does
-        // every web bundle regardless — its settings screen carries the live
-        // preview and the contacted-domains transparency readout.
-        if (meta.kind == "web" || store.propertySchema(meta.id).let { it is PropertyParseResult.Failed || (it as? PropertyParseResult.Ok)?.properties?.isNotEmpty() == true }) {
-            row.addView(GlassUi.settingsButton(this, "Settings") {
-                startActivity(
-                    Intent(this@MainActivity, BundleSettingsActivity::class.java)
-                        .putExtra(BundleSettingsActivity.EXTRA_BUNDLE_ID, meta.id)
-                )
-            }.apply { layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { marginStart = dp(8) } })
+        // Web bundles always get a settings screen (live preview + contacted
+        // domains); other kinds only when they declare LivelyProperties.
+        val hasSettings = meta.kind == "web" || store.propertySchema(meta.id).let {
+            it is PropertyParseResult.Failed ||
+                (it as? PropertyParseResult.Ok)?.properties?.isNotEmpty() == true
         }
-        return row
+        val thumbnailPath = thumbnailPathFor(meta)
+        val thumbnailFile = thumbnailPath?.takeIf { !it.startsWith(BundleListAdapter.ASSET_PREFIX) }?.let(::File)
+        return BundleRow(
+            id = meta.id,
+            title = meta.title,
+            subtitle = subtitle,
+            thumbnailPath = thumbnailPath,
+            thumbnailVersion = thumbnailFile?.lastModified() ?: 0L,
+            isActive = isActive,
+            screening = store.screening(meta.id)?.classification,
+            renderable = renderable,
+            hasSettings = hasSettings,
+            deletable = !BundledWallpapers.isBundled(meta.id)
+        )
     }
 
     // --- Performance (ported from ÆtherDesk's Preferences > Performance tab) ---
@@ -436,16 +427,12 @@ class MainActivity : AppCompatActivity() {
         return column
     }
 
-    private fun loadPreview(meta: BundleMeta) =
-        if (BundledWallpapers.isBundled(meta.id)) {
-            bundledPreview(meta)
-        } else {
-            meta.previewPath?.let { rel ->
-                runCatching { BitmapFactory.decodeFile(store.fileFor(meta.id, rel).absolutePath) }.getOrNull()
-            }
+    /** File path (or `asset:` path) of the thumbnail to show, or null when there is none yet. */
+    private fun thumbnailPathFor(meta: BundleMeta): String? {
+        if (!BundledWallpapers.isBundled(meta.id)) {
+            val rel = meta.previewPath ?: return null
+            return store.fileFor(meta.id, rel).absolutePath
         }
-
-    private fun bundledPreview(meta: BundleMeta): android.graphics.Bitmap? {
         val folder = BundledWallpapers.folderFor(meta.id) ?: return null
         val candidates = listOfNotNull(
             meta.previewPath,
@@ -456,21 +443,23 @@ class MainActivity : AppCompatActivity() {
             "preview.png"
         ).distinct()
         for (rel in candidates) {
-            val bitmap = runCatching {
-                assets.open("wallpapers/$folder/${rel.trimStart('/')}").use { input ->
-                    BitmapFactory.decodeStream(input)
-                }
-            }.getOrNull()
-            if (bitmap != null) return bitmap
+            val assetPath = "wallpapers/$folder/${rel.trimStart('/')}"
+            if (runCatching { assets.open(assetPath).close() }.isSuccess) {
+                return BundleListAdapter.ASSET_PREFIX + assetPath
+            }
         }
         return BundleThumbnailer.bundledThumbnailFile(this, meta)
             ?.takeIf { it.exists() }
-            ?.let { file -> BitmapFactory.decodeFile(file.absolutePath) }
+            ?.absolutePath
     }
 
     private fun setActiveAndPreview(meta: BundleMeta) {
         activationProblem(meta)?.let { problem ->
-            toast(problem)
+            GlassUi.messageDialog(
+                this,
+                title = "Can't activate \"${meta.title}\"",
+                message = problem + "\n\nTry importing the wallpaper again."
+            )
             return
         }
 
@@ -482,21 +471,27 @@ class MainActivity : AppCompatActivity() {
         // engine now, and an engine recreated on next visibility reads the new
         // active id anyway. No system chooser round-trip needed.
         val ourComponent = ComponentName(this, LumenfallWallpaperService::class.java)
-        if (WallpaperManager.getInstance(this).wallpaperInfo?.component == ourComponent) {
+        if (isLumenfallLiveWallpaper()) {
             ActiveBundleBus.notifyChanged()
-            toast("Now live: ${meta.title}")
+            toast("Switched to ${meta.title}")
             return
         }
 
         val intent = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER).apply {
             putExtra(WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT, ourComponent)
         }
+        pendingActivationTitle = meta.title
         try {
-            startActivity(intent)
+            wallpaperChooser.launch(intent)
         } catch (e: ActivityNotFoundException) {
+            pendingActivationTitle = null
             toast("Selected '${meta.title}'. Set Lumenfall as your live wallpaper to see it.")
         }
     }
+
+    private fun isLumenfallLiveWallpaper(): Boolean =
+        WallpaperManager.getInstance(this).wallpaperInfo?.component ==
+            ComponentName(this, LumenfallWallpaperService::class.java)
 
     private fun confirmDelete(meta: BundleMeta) {
         GlassUi.confirmDialog(
@@ -541,20 +536,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun snapLibraryScrollToNearestRow() {
-        val scroll = libraryScroll ?: return
-        if (listContainer.childCount == 0) return
-        val y = scroll.scrollY
+        if (libraryList.childCount == 0) return
         var nearestTop = 0
         var nearestDistance = Int.MAX_VALUE
-        for (i in 0 until listContainer.childCount) {
-            val child = listContainer.getChildAt(i)
-            val distance = kotlin.math.abs(child.top - y)
+        for (i in 0 until libraryList.childCount) {
+            val top = libraryList.getChildAt(i).top
+            val distance = kotlin.math.abs(top)
             if (distance < nearestDistance) {
                 nearestDistance = distance
-                nearestTop = child.top
+                nearestTop = top
             }
         }
-        if (nearestDistance > 0) scroll.smoothScrollTo(0, nearestTop)
+        if (nearestDistance > 0) libraryList.smoothScrollBy(0, nearestTop)
     }
 
     private fun displayName(uri: Uri): String? =

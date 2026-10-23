@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copyright (C) 2026 Stephen de la Vega
+  SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<resources>
+    <item name="split_pane_widen" type="id" />
+    <item name="split_pane_narrow" type="id" />
+</resources>

@@ -5,6 +5,7 @@ package com.sdelavega.lumenfall.ui
 import android.content.Context
 import android.view.MotionEvent
 import android.view.View
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import com.sdelavega.lumenfall.R
@@ -29,6 +30,20 @@ class SplitPaneLayout(context: Context) : LinearLayout(context) {
     init {
         showDividers = SHOW_DIVIDER_NONE
         divider.setOnTouchListener { _, event -> handleDividerTouch(event) }
+        divider.accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.addAction(AccessibilityNodeInfo.AccessibilityAction(ACTION_WIDEN, "Widen list"))
+                info.addAction(AccessibilityNodeInfo.AccessibilityAction(ACTION_NARROW, "Narrow list"))
+            }
+
+            override fun performAccessibilityAction(host: View, action: Int, args: android.os.Bundle?): Boolean =
+                when (action) {
+                    ACTION_WIDEN -> { adjustSplit(ACCESSIBILITY_STEP); true }
+                    ACTION_NARROW -> { adjustSplit(-ACCESSIBILITY_STEP); true }
+                    else -> super.performAccessibilityAction(host, action, args)
+                }
+        }
     }
 
     fun setPanes(first: View, second: View?, landscape: Boolean, defaultFirstFraction: Float = 0.5f) {
@@ -129,11 +144,16 @@ class SplitPaneLayout(context: Context) : LinearLayout(context) {
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 parent?.requestDisallowInterceptTouchEvent(false)
-                performClick()
+                if (event.actionMasked == MotionEvent.ACTION_UP) divider.performClick()
                 return true
             }
         }
         return true
+    }
+
+    private fun adjustSplit(delta: Float) {
+        firstFraction = (firstFraction + delta).coerceIn(MIN_FRACTION, MAX_FRACTION)
+        applyWeights()
     }
 
     private fun applyWeights() {
@@ -148,12 +168,10 @@ class SplitPaneLayout(context: Context) : LinearLayout(context) {
         }
     }
 
-    override fun performClick(): Boolean {
-        super.performClick()
-        return true
-    }
-
     private companion object {
+        val ACTION_WIDEN = R.id.split_pane_widen
+        val ACTION_NARROW = R.id.split_pane_narrow
+        const val ACCESSIBILITY_STEP = 0.10f
         const val TOUCH_SIZE_DP = 18
         const val LINE_SIZE_DP = 1
         const val GRIP_LONG_DP = 36
