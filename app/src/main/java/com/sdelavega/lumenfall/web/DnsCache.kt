@@ -18,11 +18,21 @@ class DnsCache(
 
     private val entries = ConcurrentHashMap<String, Entry>()
 
+    internal val size: Int get() = entries.size
+
     fun lookup(host: String): List<InetAddress> {
         val t = now()
-        entries[host]?.let { if (t < it.expiresAt) return it.addresses }
+        if (entries.size > SWEEP_THRESHOLD) entries.values.removeIf { t >= it.expiresAt }
+        entries[host]?.let {
+            if (t < it.expiresAt) return it.addresses
+            entries.remove(host, it)
+        }
         val addresses = resolve(host)
         entries[host] = Entry(t + ttlMs, addresses)
         return addresses
+    }
+
+    private companion object {
+        const val SWEEP_THRESHOLD = 256
     }
 }

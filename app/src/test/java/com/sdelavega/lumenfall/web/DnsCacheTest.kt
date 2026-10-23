@@ -3,7 +3,6 @@
 package com.sdelavega.lumenfall.web
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import java.net.InetAddress
@@ -27,9 +26,9 @@ class DnsCacheTest {
     fun refreshesAfterTtl() {
         var clock = 0L
         var calls = 0
-        val cache = DnsCache(ttlMs = 1_000, now = { clock }, resolve = { calls++; addr })
+        val cache = DnsCache(ttlMs = 5_000, now = { clock }, resolve = { calls++; addr })
         cache.lookup("example.com")
-        clock = 1_000
+        clock = 5_000
         cache.lookup("example.com")
         assertEquals(2, calls)
     }
@@ -48,6 +47,17 @@ class DnsCacheTest {
             // expected
         }
         assertEquals(addr, cache.lookup("example.com"))
-        assertTrue(calls == 2)
+        assertEquals(2, calls)
+    }
+
+    @Test
+    fun expiredEntryIsEvicted() {
+        var clock = 0L
+        val cache = DnsCache(ttlMs = 1_000, now = { clock }, resolve = { addr })
+        for (i in 0..299) cache.lookup("h$i.example.com")
+        assertEquals(300, cache.size)
+        clock = 2_000
+        cache.lookup("fresh.example.com")
+        assertEquals(1, cache.size)
     }
 }

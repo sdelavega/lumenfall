@@ -65,7 +65,14 @@ class WebSocketGuard(webView: WebView, private val blocklist: Blocklist = Blockl
             0, 8, 30L, TimeUnit.SECONDS, SynchronousQueue(), ThreadPoolExecutor.AbortPolicy()
         )
 
+        /**
+         * Validation and the real socket connect are separate DNS resolutions,
+         * so a DNS-rebinding attacker always has a TOCTOU window. This cache
+         * only dedupes a burst of parallel sockets to one host; its short TTL
+         * bounds the accepted window to at most 5 s.
+         */
         private val dnsCache = DnsCache(
+            ttlMs = 5_000,
             now = { System.currentTimeMillis() },
             resolve = { InetAddress.getAllByName(it).toList() }
         )
