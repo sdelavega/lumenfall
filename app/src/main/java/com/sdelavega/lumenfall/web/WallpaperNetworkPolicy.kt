@@ -54,13 +54,18 @@ class WallpaperNetworkPolicy(
         this.allowLan = allowLan
     }
 
-    fun decide(uri: Uri): Verdict {
-        val scheme = uri.scheme?.lowercase() ?: return Verdict.Block("no scheme")
-        if (scheme != "http" && scheme != "https") {
-            return Verdict.Block("scheme $scheme not allowed")
+    /** Whether private ranges are currently permitted (the live Performance toggle). */
+    val lanAllowed: Boolean get() = allowLan
+
+    fun decide(uri: Uri): Verdict = decideUrl(uri.scheme, uri.host)
+
+    /** Scheme + host part of [decide], free of `Uri` so JVM code (the fetch proxy) can share it. */
+    fun decideUrl(scheme: String?, host: String?): Verdict {
+        val s = scheme?.lowercase() ?: return Verdict.Block("no scheme")
+        if (s != "http" && s != "https") {
+            return Verdict.Block("scheme $s not allowed")
         }
-        val host = uri.host?.lowercase() ?: return Verdict.Block("no host")
-        return decideHost(host)
+        return decideHost(host?.lowercase() ?: return Verdict.Block("no host"))
     }
 
     /** Host-level part of [decide] (scheme already checked); separate so JVM tests need no `Uri`. */

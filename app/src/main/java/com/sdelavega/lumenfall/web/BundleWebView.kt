@@ -137,7 +137,7 @@ object BundleWebView {
             // enforcement point, not a user preference); the shim only routes
             // external http(s) through it.
             addJavascriptInterface(
-                NativeFetchBridge(this, networkPolicy, onLog),
+                NativeFetchBridge(this, networkPolicy, bundleId, onLog),
                 "aetherDeskFetch"
             )
             webViewClient = object : WebViewClient() {
