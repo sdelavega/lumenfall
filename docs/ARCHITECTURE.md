@@ -359,10 +359,10 @@ the user may grant approximate location):
 - Fine or coarse: both permissions are declared and requested together (Android
   requires coarse alongside fine), so an approximate grant works; the provider
   returns whatever accuracy was granted and the bridge reports it.
-- Reverse geocoding is skipped when `Geocoder.isPresent()` is false and
-  otherwise runs asynchronously. `getCurrentPosition` resolves immediately; the
-  place label comes from a 2-decimal coordinate cache (`web/LabelCache`) that
-  the async lookup fills for the next request.
+- No reverse geocoding: Android's `Geocoder` is a network request to the
+  platform's backend (Google on most devices) carrying precise coordinates, so
+  Lumenfall does not call it and `pos.label` is not provided. This keeps the
+  statement "Lumenfall makes no network requests of its own" true.
 - Lumenfall never sets `window.aetherDesk.system.capabilities.ipGeolocation`,
   so WeatherAether's ipapi.co and BigDataCloud paths stay off (and the network
   policy blocks those hosts anyway); it uses device location or a typed city,

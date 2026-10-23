@@ -3,9 +3,6 @@
 package com.sdelavega.lumenfall.web
 
 import android.content.Context
-import android.location.Address
-import android.location.Geocoder
-import android.util.Log
 import android.location.Location
 import android.location.LocationManager
 import android.os.CancellationSignal
@@ -14,7 +11,6 @@ import android.os.Looper
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
-import java.util.Locale
 
 /**
  * Fetches the device's current location via the framework [LocationManager].
@@ -27,6 +23,10 @@ import java.util.Locale
  * wallpaper that occasionally asks "where am I" needs. Adding Play Services
  * just for this would double the APK and break the no-GMS posture for no
  * gain on a Pixel Tablet, which always has Play anyway.
+ *
+ * No reverse geocoding: Lumenfall never asks Android's geocoder (which on most
+ * devices is a network request to Google) for a place name, so `pos.label` is
+ * not provided and the app makes no network requests of its own.
  *
  * Results are delivered on the main thread so callers can `evaluateJavascript`
  * straight back into the WebView without an extra hop.
@@ -132,7 +132,6 @@ class GeolocationProvider(private val context: Context) {
             return
         }
         onResult(Result.Fix(toJson(location).toString()))
-        requestLabel(location)
     }
 
     private fun toJson(loc: Location): JSONObject = JSONObject().apply {
@@ -146,40 +145,5 @@ class GeolocationProvider(private val context: Context) {
         put("timestamp", loc.time)
         put("elapsedRealtimeNanos", loc.elapsedRealtimeNanos)
         put("provider", loc.provider ?: "unknown")
-        labelCache.get(loc.latitude, loc.longitude)?.let { put("label", it) }
-    }
-
-    /**
-     * Fills [labelCache] for the next request. Never blocks and never delays
-     * the position result; skipped entirely when no geocoder backend exists.
-     */
-    private fun requestLabel(loc: Location) {
-        if (labelCache.get(loc.latitude, loc.longitude) != null) return
-        if (!Geocoder.isPresent()) return
-        val lat = loc.latitude
-        val lon = loc.longitude
-        runCatching {
-            Geocoder(context, Locale.getDefault()).getFromLocation(lat, lon, 1,
-                object : Geocoder.GeocodeListener {
-                    override fun onGeocode(addresses: MutableList<Address>) {
-                        val address = addresses.firstOrNull() ?: return
-                        val city = address.locality ?: address.subAdminArea ?: address.adminArea
-                        listOfNotNull(city, address.adminArea)
-                            .distinct()
-                            .joinToString(", ")
-                            .ifBlank { null }
-                            ?.let { labelCache.put(lat, lon, it) }
-                    }
-
-                    override fun onError(errorMessage: String?) {
-                        Log.w(TAG, "geocoder error: $errorMessage")
-                    }
-                })
-        }.onFailure { Log.w(TAG, "geocoder request failed", it) }
-    }
-
-    private companion object {
-        const val TAG = "GeolocationProvider"
-        val labelCache = LabelCache()
     }
 }
