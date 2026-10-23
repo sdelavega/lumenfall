@@ -458,3 +458,23 @@ Open questions:
   small GL layer for consistent scaling and crossfade behavior?
 - Which Lively wallpaper types map cleanly to Android, and which need explicit
   "unsupported" reporting in the picker?
+
+## Release verification (1.0.0)
+
+Device smoke run on a Pixel Tablet (Android 17 beta, arm64, 2560×1600),
+debug build of the release branch:
+
+- All eight bundled wallpapers switch in place and render; Weather Aether with
+  no location shows its "Set a city" notice and makes no IP-geolocation calls.
+- Live property changes (folder dropdown, sliders) reach the running preview.
+- Zip import, in-place activation, and deleting the active bundle (the engine
+  falls back to the placeholder page) all behave as designed.
+- 30-minute hide/show soak: no crashes, no ANRs, no watchdog demotions; one
+  process for the whole run.
+- Rotation portrait ↔ landscape lays out the wallpaper and the app correctly.
+- `/proc/<pid>/stat` of the WebView renderer (an isolated `u0_i…` uid) is not
+  readable from the app, confirming that frame pressure is the renderer-cost
+  signal the performance governor can use.
+
+The run also found that declared web entry files other than `index.html`
+(e.g. `triangle.html`) were rejected at import; fixed before release.

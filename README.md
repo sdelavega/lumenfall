@@ -8,8 +8,11 @@ analytics and no accounts.
 Eight wallpapers are included. You can import more from a .zip, and
 each one has its own settings screen with a live preview.
 
-Screenshots are coming; they will live under
-`fastlane/metadata/android/en-US/images/phoneScreenshots/`.
+![Wallpaper library](fastlane/metadata/android/en-US/images/tenInchScreenshots/1.jpg)
+
+![Rainfall settings with live preview](fastlane/metadata/android/en-US/images/tenInchScreenshots/2.jpg)
+
+More screenshots are in `fastlane/metadata/android/en-US/images/tenInchScreenshots/`.
 
 ## Install
 
