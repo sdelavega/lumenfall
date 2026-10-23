@@ -1,10 +1,18 @@
 # Architecture Notes
 
-Lumenfall is split into these layers:
+Lumenfall is split into these layers. The application id and Kotlin package are
+`com.sdelavega.lumenfall` (paths below abbreviate it as `app/...`); the version
+is 1.0.0, versionCode 10000. The bundle-facing bridge keeps ÆtherDesk's names
+(`window.aetherDesk.*`, `livelyPropertyListener`, `onPropertyChange`) so existing
+bundles run unchanged.
 
-1. `core-rust`: normalized Lively models, parsing, validation, and portable
-   policy.
-2. `app/.../core`: JNI loading and narrow Kotlin facade over Rust.
+1. `core-rust`: normalized Lively models, parsing, validation, import
+   screening, and portable policy, including the single network blocklist
+   (`blocklist.rs`) that both the screener and the Kotlin network policy use.
+2. `app/.../core`: JNI loading and narrow Kotlin facade over Rust. `CoreApi` is the
+   interface the importer and policy code depend on, so JVM tests use a fake.
+   A JVM test checks the `external fun` names against the Rust exports
+   (`Java_com_sdelavega_lumenfall_core_LumenfallCore_*`) so the two cannot drift.
 3. `app/.../service`: Android `WallpaperService.Engine` lifecycle.
 4. `app/.../bridge`: JavaScript bridge exposed to web wallpapers.
 5. `app/.../render`, `web`, `video`, `image`: the `WallpaperRenderer` interface
@@ -15,22 +23,35 @@ Lumenfall is split into these layers:
 6. `app/.../storage`: `BundleStore` — on-disk bundle dir (`filesDir/bundles/<id>/`,
    each with `bundle.json` metadata, `properties.json` (parsed LivelyProperties
    schema), and `overrides.json` (user-set values)) plus the active-bundle pointer.
-   `BundleProperty` models one configurable property. `AppSettingsStore` is the
+   `PropertySchema` is a typed sealed hierarchy (Slider, Color, Checkbox, Dropdown,
+   FolderDropdown, Text, Button, Label) parsed once from Rust's envelope; no UI
+   code does string-keyed JSON lookups. Parse errors surface as a message instead
+   of an empty list, and the parsed schema is cached per bundle, invalidated on
+   import, delete and bundled-asset upgrade. Override reads tolerate corrupt data.
+   `PrefKeys` URL-encodes bundle ids into preference keys and runs a versioned
+   one-time migration (v2 key encoding; v3 moves the retired `LivelyRain` to
+   `Rainfall`). `AppSettingsStore` is the
    separate, app-level counterpart — global Performance preferences (see below)
    that apply to every wallpaper, not one bundle's overrides.
 7. `app/.../importer`: `BundleImporter` — zip-slip-guarded extraction of a Lively
    `.zip`, then `LivelyInfo.json` (and `LivelyProperties.json` when present) parsed
    via the Rust core into bundle metadata + property schema.
 8. `app/.../ui`: `MainActivity` — the bundle library/picker (SAF import, list,
-   select-active which opens the live-wallpaper preview) plus the global
+   select-active which opens the live-wallpaper preview; a `RecyclerView` with
+   `DiffUtil`, so a finished thumbnail updates one row) plus the global
    Performance + About panes; `BundleSettingsActivity` — per-bundle property
    controls (slider/color/dropdown/checkbox/...) and its live preview.
    `GlassUi` is the shared styling toolkit both screens draw every control from.
-9. `app/.../render/PropertyBus`: process-local fan-out of live property changes
-   from the settings UI to any concurrently-running renderer.
+   "Now live" is reported only after the system chooser returns and our service
+   is the active wallpaper; activation failures show a dialog with a re-import hint.
+9. `app/.../render/*Bus`: process-local fan-out of live property changes
+   (`PropertyBus`), performance settings, the active bundle and bundle deletion
+   (`BundleDeletedBus`; the settings screen tears its preview down and finishes
+   when its bundle is deleted). Every bus delivers listeners on the main thread
+   through `MainThreadDispatcher`.
 
 Bundle flow: import zip -> extract to `bundles/<id>/` with zip-slip protection
--> locate `LivelyInfo.json` -> send the metadata base path plus a normalized file
+-> locate `LivelyInfo.json` (shallowest match wins) -> send the metadata base path plus a normalized file
 inventory to the Rust validator -> persist `BundleMeta` only when Rust returns an
 admissible web/video/image bundle -> picker sets active -> the engine loads the
 active bundle. Web bundles load from
@@ -38,8 +59,8 @@ active bundle. Web bundles load from
 `InternalStoragePathHandler`); video/image read the file directly from
 `bundles/<id>/<entry>`. Unsupported Lively types are rejected at import with a
 clear reason. A selected bundle takes effect when the engine is (re)created (the
-picker reopens the wallpaper preview to do this); live in-place swap is a later
-refinement.
+picker reopens the wallpaper preview to do this). When no bundle is active the
+engine loads `assets/placeholder/index.html` ("Pick a wallpaper to begin").
 
 Validation lives in Rust (`bundle_validation.rs`) so it is testable without
 Android. The current corpus covers declared web entries, nested bundles with
@@ -70,23 +91,32 @@ identically on both hosts):
 
 - **Import screening** (`core-rust/bundle_screening.rs`, heuristics from
   ÆtherDesk's WallpaperValidator): the importer concatenates a web bundle's
-  .js/.html source (1 MB/file, 8 MB total caps) and Rust classifies it.
+  .js/.html source (1 MB/file, 8 MB total caps) and Rust classifies it. Every
+  skipped file (unreadable, over a cap) is logged, and any skip downgrades an
+  `allowed` result to `limited`, since screening was incomplete. The screener
+  matches the full blocked domains from the shared blocklist (no TLD stripping,
+  which falsely rejected wallpapers such as `segment`-named scripts).
   Trackers/ad domains, crypto miners, ServiceWorker/SharedWorker,
   `window.open`, `while(true)`, and >10 network call sites reject the import
   with a reason; network use, eval-family, WebGL, and heavy-GPU patterns
   downgrade to "limited" (persisted as `screening.json`).
-- **FPS cap** (web shim): `requestAnimationFrame` is throttled to
+- **FPS cap** (web shim, `assets/bridge/aetherdesk-shim.js`): `requestAnimationFrame` is throttled to
   `aetherDesk.system.fpsCap` — default 30, clamped 15–60 — sleeping between
   frames via setTimeout, and drops frames entirely while hidden. Measured on
   device: a busy canvas holds ~30 fps on a 60–120 Hz panel.
 - **Network policy** (`web/WallpaperNetworkPolicy`, enforced in
-  `shouldInterceptRequest` since Android has no WKContentRuleList): ad /
+  `shouldInterceptRequest` since Android has no WKContentRuleList): the blocklist
+  comes from Rust over JNI (`blocklistJson`), the same source the screener uses;
+  `ipapi.co` and `api.bigdatacloud.net` are blocked for every bundle (see
+  below), though they are not screener issues. Ad /
   analytics / miner domains and SSRF targets (raw IP literals, localhost,
   `*.local`, metadata hosts, nip.io/sslip.io) are always blocked; bundles
   screened "limited" (or imported before screening existed) also get a
   5-req/min budget on external requests. Main-frame navigation off the bundle
-  origin is refused; the shim rejects WebSockets to raw IPs (sockets bypass
-  shouldInterceptRequest). Local asset-loader traffic is never filtered.
+  origin is refused; `WebSocketGuard` validates WebSocket targets (sockets bypass
+  shouldInterceptRequest): raw IPs are refused, and DNS validation runs on a
+  bounded executor (8 in flight, extras rejected) with a 5 s DNS cache. That cache
+  leaves a documented time-of-check window for DNS rebinding. Local asset-loader traffic is never filtered.
 
 Settings UI (DONE, 2026-07-03):
 
@@ -116,8 +146,12 @@ Settings UI (DONE, 2026-07-03):
   The CPU backstop (`Process.getElapsedCpuTime`) measures only the host
   process: the WebView's renderer runs in an isolated process whose CPU this
   app cannot read, as no public API exposes its pid. Frame pressure is the
-  renderer-cost proxy (#25). The on-device `/proc` readability probe is part
-  of the release smoke run, to confirm that assumption on real hardware.
+  renderer-cost proxy (#25). The jank decision is pure and unit-tested
+  (`web/GovernorMath`); a window with no frames or zero length is not jank, so
+  a hidden or paused preview never ratchets the cap down. A frozen visible
+  renderer is the watchdog's job, not the governor's. The on-device `/proc`
+  readability probe is part of the release smoke run, to confirm that
+  assumption on real hardware.
 
 MainActivity (DONE, 2026-07-03): same responsive-split + glass-everywhere
 treatment as the settings screen — wallpapers/import on one side (left in
@@ -138,9 +172,16 @@ Watchdog and failure recovery (DONE, 2026-07-03 — ported from ÆtherDesk's
 WatchdogTimer):
 
 - `web/WallpaperWatchdog` fires once if 30s pass with no activity, poked by
-  the bridge's existing 2s tick telemetry and page-load events. Demote, don't
+  the bridge's existing 2s tick telemetry and page-load events. The shim sends no
+  tick while suspended, and the host ignores ticks while rendering is not
+  allowed. Demote, don't
   retry: a bundle whose JS thread is genuinely wedged (e.g. a synchronous
   infinite loop) will likely wedge the same way again.
+- `WallpaperWebViewHost` mutates its state on the main thread only (callbacks
+  from WebView-internal threads, such as render-process-gone, hop through the
+  main handler). Deep sleep is scheduled only after an actual `setVisible(false)`,
+  and its snapshot bitmap is allocated inside the PixelCopy flow and recycled
+  on every path.
 - `WallpaperWebViewHost` owns three failure modes, all funneling into the
   same one-way demotion (a live wallpaper has no crash UI to fall back on):
   a watchdog timeout or a dead renderer process (`BundleWebView`'s
@@ -227,8 +268,8 @@ of the porting recommendations, after the watchdog):
 - The generated JPEG lives in the bundle dir under a dot-prefixed name
   (`.lumenfall-thumb.jpg`) so it can't collide with bundle content.
   `MainActivity` drains missing thumbnails one at a time on each picker
-  refresh (a concurrent second WebView capture would just add memory
-  pressure), re-rendering the list as each lands.
+  refresh through a single serial, de-duplicated queue (`web/ThumbnailQueue`,
+  no `running` flag, no recursion), updating one list row as each lands.
 - Verified on-device for all three kinds. The web capture doubled as a
   sandbox check: the probe bundle's HUD in the captured thumbnail shows
   the reduced fps cap applied and its tracker/metadata/raw-IP probes
@@ -272,11 +313,13 @@ Current JNI shape:
 - Kotlin calls `LumenfallCore.parseLivelyProperties(json)`.
 - Kotlin calls `LumenfallCore.validateBundle(infoJson, basePath, filesJson)`.
 - Kotlin calls `LumenfallCore.screenBundle(scriptSource)`.
+- Kotlin calls `LumenfallCore.blocklistJson()` for the shared blocklist.
 - Rust returns normalized JSON envelopes for now. That avoids duplicating the
   full model in Kotlin while the engine is still moving.
 
-Geolocation (DONE, 2026-07-03 — web bundles only, fine location, per-bundle
-toggle, screening-gated):
+Geolocation (DONE, 2026-07-03 — web bundles only, per-bundle toggle,
+screening-gated; 1.0 also declares and requests `ACCESS_COARSE_LOCATION`, so
+the user may grant approximate location):
 
 - Exposed to web wallpapers as `window.aetherDesk.geolocation.getCurrentPosition
   ({enableHighAccuracy, timeoutMs})`, a Promise-based API distinct from the raw
@@ -292,7 +335,7 @@ toggle, screening-gated):
   already made at import, so a screened-out bundle can't reach location as a
   side channel); (2) a per-bundle toggle in `BundleSettingsActivity`, default
   off (even a clean bundle doesn't get location until the user opts this
-  wallpaper in); (3) `ACCESS_FINE_LOCATION` granted. The toggle is only shown
+  wallpaper in); (3) fine or coarse location granted. The toggle is only shown
   for web bundles with a clean screening result — a limited bundle gets an
   explainer instead, so the absence isn't a mystery.
 - A live wallpaper runs in the background and can't host a permission dialog,
@@ -303,8 +346,17 @@ toggle, screening-gated):
   so a mid-session revoke surfaces as a clean JS `denied` rejection rather
   than a crash (the policy snapshot was taken at load, but revocation is the
   one condition that can change after).
-- Fine (not coarse) location: map/sun-position style wallpapers want real
-  precision. Coarse wasn't chosen.
+- Fine or coarse: both permissions are declared and requested together (Android
+  requires coarse alongside fine), so an approximate grant works; the provider
+  returns whatever accuracy was granted and the bridge reports it.
+- Reverse geocoding is skipped when `Geocoder.isPresent()` is false and
+  otherwise runs asynchronously. `getCurrentPosition` resolves immediately; the
+  place label comes from a 2-decimal coordinate cache (`web/LabelCache`) that
+  the async lookup fills for the next request.
+- Lumenfall never sets `window.aetherDesk.system.capabilities.ipGeolocation`,
+  so WeatherAether's ipapi.co and BigDataCloud paths stay off (and the network
+  policy blocks those hosts anyway); it uses device location or a typed city,
+  with Open-Meteo and MET Norway as its only services.
 - Provider: the framework `LocationManager.getCurrentLocation` (API 30+, our
   minSdk is 33), not FusedLocationProvider. Lumenfall ships no Play Services
   dependency today (3.5 MB APK, runs on any Android 13+ device); the framework
@@ -340,16 +392,34 @@ Native build (DONE, 2026-06-29):
 - `core/LumenfallCore.kt` loads the lib unconditionally (no `runCatching`); a
   load failure is a packaging bug we want loud. `ui/MainActivity.kt` runs an
   on-device JNI smoke test, verified passing on a Pixel Tablet (Android 17).
-- Toolchain note: `cargo` must resolve to the rustup shim (`~/.cargo/bin`), which
-  owns the `aarch64-linux-android` target — NOT the Homebrew `rust` formula. The
-  Gradle task prepends `~/.cargo/bin` to PATH to guarantee this.
+- Toolchain note: `rust-toolchain.toml` pins Rust 1.99.1 with the
+  `aarch64-linux-android` target, which only rustup's `cargo`/`rustc` honour — not
+  the Homebrew `rust` formula. The Gradle task uses `$CARGO` or `cargo` from
+  `PATH` (no hard-coded path); the `justfile` exports `CARGO`, `RUSTC` and
+  `RUSTDOC` pointing at rustup's when it is present.
+- Reproducible release: the Cargo release profile uses `lto`, one codegen unit,
+  `strip` and `panic = "abort"`, builds use `--locked`, and `RUSTFLAGS` remaps the
+  workspace, Cargo home and rustup home so no build-machine path reaches the `.so`
+  (`just no-home-paths` scans tracked files, the `.so` and the APK). The APK
+  omits dependency metadata. `just repro-check` builds twice from separate copies
+  of the tree and compares the unsigned APKs bytewise.
+
+Vendored wallpapers (DONE, 1.0): Weather Aether, Gradient Wave, Matrix Rain and
+Neon City are exported from a local ÆtherDesk checkout at an exact commit by
+`just sync-wallpapers <ref>` (`git archive`, committed files only), which also
+writes `assets/wallpapers/wallpapers.lock` (repo URL, commit, SHA-256 per file).
+A JVM test (`just wallpapers-lock`) fails on any hand edit, missing or extra
+file, so fixes belong upstream. The other bundled wallpapers are Rainfall (an
+original WebGL rain-on-glass wallpaper replacing Rain, with a Canvas 2D fallback)
+and three MIT-licensed ones. `THIRD_PARTY.md` and the in-app licences screen are
+generated by `just licenses`.
 
 Release build (DONE, 2026-07-03):
 
 - `buildTypes.release` enables R8 minification + resource shrinking.
   `app/proguard-rules.pro` keeps the two name-resolved surfaces: the
   `LumenfallCore` JNI class/methods (Rust exports
-  `Java_com_aetherdesk_lumenfall_core_LumenfallCore_*` symbols) and
+  `Java_com_sdelavega_lumenfall_core_LumenfallCore_*` symbols) and
   `@JavascriptInterface` bridge methods (called by name from bundle JS).
 - Signing reads a gitignored `keystore.properties` + `release.jks` at the repo
   root; when absent (fresh checkout, CI) release falls back to the debug key so
@@ -359,7 +429,8 @@ Release build (DONE, 2026-07-03):
   kinds, settings UI, and override persistence work minified. APK is 3.5 MB.
   Visible CPU for the busy 60 fps web bundle: ~60% of one core (vs ~111%
   debug); 0.0% hidden. Debug↔release switches need a full uninstall (different
-  signatures), which wipes imported bundles.
+  signatures), which wipes imported bundles. Cloud backup excludes imported
+  bundles and thumbnail caches (`data_extraction_rules.xml`).
 
 Open questions:
 

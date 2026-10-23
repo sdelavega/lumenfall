@@ -1,0 +1,60 @@
+# Draft fdroiddata recipe: metadata/com.sdelavega.lumenfall.yml
+# Copyright (C) 2026 Stephen de la Vega
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# The Rust-install pattern (Debian `rustup` package via `sudo:`, then
+# `rustup default` / `rustup target add` in `build:`, Binaries: + AllowedAPKSigningKeys:
+# with Tags/Version auto-update) follows the current recipe
+#   https://gitlab.com/fdroid/fdroiddata/-/blob/master/metadata/chat.delta.lite.yml
+# (ArcaneChat). That recipe drives Rust through its own script, not cargo-ndk;
+# the cargo-ndk specifics below (install, PATH) are this project's own and have
+# not been run on an F-Droid build server.
+
+Categories:
+  - Theming
+License: GPL-3.0-or-later
+AuthorName: Stephen de la Vega
+WebSite: https://github.com/sdelavega/lumenfall
+SourceCode: https://github.com/sdelavega/lumenfall
+IssueTracker: https://github.com/sdelavega/lumenfall/issues
+Changelog: https://github.com/sdelavega/lumenfall/releases
+
+AutoName: Lumenfall
+
+RepoType: git
+Repo: https://github.com/sdelavega/lumenfall.git
+
+Builds:
+  - versionName: 1.0.0
+    versionCode: 10000
+    commit: v1.0.0
+    subdir: app
+    timeout: 20000
+    sudo:
+      - apt-get update
+      - apt-get install -y rustup openjdk-17-jdk-headless
+      - update-java-alternatives -s java-1.17.0-openjdk-amd64
+    binary: https://github.com/sdelavega/lumenfall/releases/download/v%v/Lumenfall-%v.apk
+    gradle:
+      - yes
+    ndk: 27.3.13750724
+    build:
+      # rustup's bin dir must come first so cargo/rustc/cargo-ndk are rustup's
+      # and honour rust-toolchain.toml (channel 1.99.1, aarch64-linux-android).
+      - export PATH="$HOME/.cargo/bin:$PATH"
+      - rustup default 1.99.1
+      - rustup target add aarch64-linux-android
+      - cargo install cargo-ndk --locked --version 4.1.2
+      # The Gradle call F-Droid makes afterwards does not inherit the PATH set
+      # above, so build the Rust library here, with it; that Gradle task is then
+      # up to date when F-Droid runs the main build.
+      - ../gradlew :app:cargoNdkBuild --console=plain
+
+# Value to be filled in by the maintainer after running `just signing-fingerprint`
+# (the SHA-256 recorded in docs/signing-cert.sha256, lowercase hex, no colons).
+AllowedAPKSigningKeys: FILL_FROM_docs/signing-cert.sha256
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+CurrentVersion: 1.0.0
+CurrentVersionCode: 10000

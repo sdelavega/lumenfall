@@ -1,0 +1,21 @@
+Lumenfall is a live wallpaper host for Android. It runs wallpaper bundles made for Lively and AetherDesk, with their settings panels, on Android's own wallpaper service. Eight wallpapers are included, and you can import more from a folder or a zip.
+
+<b>Features</b>
+<ul>
+<li>Web, video and image wallpapers, including WebGL and canvas scenes</li>
+<li>Per-wallpaper settings with a live preview, built from the bundle's own property file</li>
+<li>Performance controls: frame-rate cap, pause when hidden, pause on battery, Low Power Mode</li>
+<li>A watchdog that falls back to a plain colour if a wallpaper hangs</li>
+<li>Imported bundles are screened for trackers, crypto miners and unsafe patterns</li>
+</ul>
+
+<b>Privacy</b>
+Lumenfall has no analytics, no accounts and no ads, and makes no network requests of its own. The only network use is by wallpapers you choose to run, and every external domain a wallpaper has contacted is listed in its settings. Known tracker, ad and miner hosts are blocked for every wallpaper, as are local network addresses unless you allow them.
+
+The bundled Weather Aether wallpaper contacts Open-Meteo (forecast and geocoding) and MET Norway. Its IP-based location and BigDataCloud paths are switched off in Lumenfall: they need a host capability Lumenfall never provides, and Lumenfall's network policy blocks both hosts anyway. Location is optional: grant approximate or precise location per wallpaper, or type a city.
+
+<b>Requirements</b>
+Android 13 or newer, arm64 device.
+
+<b>Open source</b>
+Free software under GPL-3.0-or-later. Builds are reproducible, so you can verify a release against the source.
