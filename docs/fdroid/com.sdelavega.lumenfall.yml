@@ -11,7 +11,10 @@
 # the direct `cargo ndk` invocation and the PATH handling are this project's own.
 # fdroidserver deletes gradlew before `build:`, so the .so is built here, not via
 # Gradle, with the exact command and RUSTFLAGS of cargoNdkBuild in
-# app/build.gradle.kts so the output matches the GitHub APK. Known risk: the later
+# app/build.gradle.kts so the output matches the GitHub APK. The GitHub APK is
+# CI's Linux release build signed locally (see docs/releasing.md); F-Droid also
+# builds on Linux, which is why the two can match entry for entry (macOS NDK
+# packages build a different .so). Known risk: the later
 # Gradle run would rerun cargoNdkBuild (no task history), so `gradleprops` passes
 # -Plumenfall.prebuiltJni, which skips that task and fails fast if the .so is missing.
 

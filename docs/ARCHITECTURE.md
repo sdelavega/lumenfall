@@ -415,6 +415,14 @@ Native build (DONE, 2026-06-29):
   (`just no-home-paths` scans tracked files; `just assemble-release` scans the freshly built `.so` and the APK). The APK
   omits dependency metadata. `just repro-check` builds twice from separate copies
   of the tree and compares the unsigned APKs bytewise.
+- Cross-host finding: the macOS and Linux NDK packages (and so the toolchains
+  cargo-ndk drives) produce different `liblumenfall_core.so` bytes from identical
+  source, so a same-host check alone does not prove F-Droid can reproduce a
+  release. The shipped APK is therefore CI's Linux build (`release-apk` artifact),
+  signed locally by `signPrebuiltRelease`; v2/v3 signatures sit outside the zip
+  entries, so signing does not alter them, and `scripts/release.sh` verifies the
+  signed APK's entries and CRCs equal the unsigned artifact's. Release builds
+  without a keystore are unsigned (no debug-key fallback).
 
 Vendored wallpapers (DONE, 1.0): Weather Aether, Gradient Wave, Matrix Rain and
 Neon City are exported from a local ÆtherDesk checkout at an exact commit by

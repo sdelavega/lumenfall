@@ -1,7 +1,10 @@
 // Copyright (C) 2026 Stephen de la Vega
 // SPDX-License-Identifier: GPL-3.0-or-later
+import java.io.ByteArrayOutputStream
 import java.util.Properties
+import javax.inject.Inject
 import org.gradle.api.tasks.Exec
+import org.gradle.process.ExecOperations
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -12,10 +15,13 @@ plugins {
 // Release signing identity. `keystore.properties` + `release.jks` live at the
 // repo root and are gitignored — the keystore is the app's permanent identity,
 // so it must be backed up privately, never committed. When absent (fresh
-// checkout, CI), release builds fall back to the debug key so they still
-// assemble; they just aren't shippable.
+// checkout, CI), the release build is left UNSIGNED (there is no debug-key
+// fallback): the shipped APK is CI's Linux build, signed afterwards on the
+// maintainer's machine by `signPrebuiltRelease` below.
+// -Plumenfall.noKeystore makes the file invisible even when present, to build an
+// unsigned release locally (e.g. to compare with CI) without touching the keystore.
 val keystoreProps: Properties? = rootProject.file("keystore.properties")
-    .takeIf { it.exists() }
+    .takeIf { it.exists() && !providers.gradleProperty("lumenfall.noKeystore").isPresent }
     ?.let { f -> Properties().apply { f.inputStream().use { load(it) } } }
 
 // --- Rust native core (cargo-ndk) -----------------------------------------
@@ -93,7 +99,7 @@ android {
             signingConfig = if (keystoreProps != null) {
                 signingConfigs.getByName("release")
             } else {
-                signingConfigs.getByName("debug")
+                null
             }
         }
         // Unsigned twin of release, used by scripts/repro-check.sh: signing is
@@ -173,6 +179,110 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
     cmd += listOf("--platform", rustMinApi.toString(), "-o", outDir.absolutePath,
         "build", "--release", "--locked", "-p", "lumenfall-core")
     commandLine(cmd)
+}
+
+// Signs an already-built (CI's) unsigned release APK with the release key, without
+// rebuilding: apksigner v2/v3 signatures live in a block outside the zip entries,
+// so the signed APK's contents stay byte-identical to the unsigned one. v1 (JAR)
+// signing is off (it would add META-INF entries; minSdk 33 does not need it).
+// The passwords go only into the child process's environment; they are never on a
+// command line, echoed or logged, and the tool's output is shown only on failure.
+// Usage: ./gradlew :app:signPrebuiltRelease -PunsignedApk=<in> -PsignedApk=<out>
+abstract class SignPrebuiltTask @Inject constructor(private val execOps: ExecOperations) :
+    DefaultTask() {
+    @get:Internal abstract val unsignedApk: Property<String>
+    @get:Internal abstract val signedApk: Property<String>
+    @get:Internal abstract val sdkDir: Property<String>
+    @get:Internal abstract val storeFile: Property<String>
+    @get:Internal abstract val keyAlias: Property<String>
+    @get:Internal abstract val storePassword: Property<String>
+    @get:Internal abstract val keyPassword: Property<String>
+
+    private fun apksigner(): String {
+        val versionKey = { n: String -> n.split('.', '-').map { it.toIntOrNull() ?: 0 } }
+        val newest = File(sdkDir.get(), "build-tools").listFiles()
+            ?.filter { File(it, "apksigner").canExecute() }
+            ?.sortedWith { a, b ->
+                val x = versionKey(a.name)
+                val y = versionKey(b.name)
+                (0 until maxOf(x.size, y.size)).map { (x.getOrElse(it) { 0 }).compareTo(y.getOrElse(it) { 0 }) }
+                    .firstOrNull { it != 0 } ?: 0
+            }
+            ?.lastOrNull()
+            ?: throw GradleException("apksigner not found under ${sdkDir.get()}/build-tools")
+        return File(newest, "apksigner").absolutePath
+    }
+
+    private fun run(env: Map<String, String>, vararg args: String) {
+        val out = ByteArrayOutputStream()
+        val result = execOps.exec {
+            commandLine(*args)
+            environment(env)
+            standardOutput = out
+            errorOutput = out
+            isIgnoreExitValue = true
+        }
+        if (result.exitValue != 0) {
+            throw GradleException("apksigner failed (exit ${result.exitValue}):\n$out")
+        }
+    }
+
+    @TaskAction
+    fun sign() {
+        val tool = apksigner()
+        val input = File(unsignedApk.get())
+        val output = File(signedApk.get())
+        if (!input.isFile) throw GradleException("unsigned APK not found: $input")
+        output.absoluteFile.parentFile.mkdirs()
+        output.delete()
+        run(
+            mapOf(
+                "LUMENFALL_KS_PASS" to storePassword.get(),
+                "LUMENFALL_KEY_PASS" to keyPassword.get(),
+            ),
+            tool, "sign",
+            "--ks", storeFile.get(),
+            "--ks-key-alias", keyAlias.get(),
+            "--ks-pass", "env:LUMENFALL_KS_PASS",
+            "--key-pass", "env:LUMENFALL_KEY_PASS",
+            "--v1-signing-enabled", "false",
+            "--v2-signing-enabled", "true",
+            "--v3-signing-enabled", "true",
+            "--out", output.absolutePath,
+            input.absolutePath,
+        )
+        run(emptyMap(), tool, "verify", output.absolutePath)
+        logger.lifecycle("signed and verified: $output")
+    }
+}
+
+tasks.register<SignPrebuiltTask>("signPrebuiltRelease") {
+    group = "release"
+    description = "Signs CI's unsigned release APK with the release key (-PunsignedApk, -PsignedApk)"
+    val props = keystoreProps
+    val unsigned = providers.gradleProperty("unsignedApk")
+    val signed = providers.gradleProperty("signedApk")
+    doFirst {
+        if (props == null) {
+            throw GradleException(
+                "signPrebuiltRelease needs keystore.properties (and release.jks) at the repo root, " +
+                    "and must not run with -Plumenfall.noKeystore."
+            )
+        }
+        if (!unsigned.isPresent || !signed.isPresent) {
+            throw GradleException("pass -PunsignedApk=<path> and -PsignedApk=<path>")
+        }
+    }
+    if (props != null) {
+        // Relative paths are relative to the repository root.
+        unsignedApk.set(unsigned.map { rootProject.file(it).absolutePath })
+        signedApk.set(signed.map { rootProject.file(it).absolutePath })
+        sdkDir.set(android.sdkDirectory.absolutePath)
+        storeFile.set(rootProject.file(props.getProperty("storeFile")).absolutePath)
+        keyAlias.set(props.getProperty("keyAlias"))
+        storePassword.set(props.getProperty("storePassword"))
+        keyPassword.set(props.getProperty("keyPassword"))
+    }
 }
 
 tasks.named("preBuild") { dependsOn(cargoNdkBuild) }

@@ -30,6 +30,12 @@ The release is signed with the maintainer's key. Its certificate SHA-256 is in
 [`docs/signing-cert.sha256`](docs/signing-cert.sha256) so you can compare it with
 what Android or `apksigner verify --print-certs` reports.
 
+The GitHub APK is the unsigned Linux build from this repository's CI, signed with
+that key and nothing else. To check it, download the `release-apk` artifact of the
+CI run for the release commit and compare the contents: `unzip -v` of both APKs
+lists identical entries and CRCs, and the signed one has no `META-INF/*.SF` or
+`*.RSA` files (the signature sits in the APK signing block, outside the entries).
+
 **Obtainium:** add `https://github.com/sdelavega/lumenfall` as a source. It
 follows GitHub releases and installs updates for you. Lumenfall has no in-app
 update check.
@@ -101,7 +107,7 @@ check, the release build and a reproducibility check (two clean builds compared
 byte for byte). If Homebrew's Rust comes before rustup on your `PATH`, run
 builds through `just`, which points Cargo, rustc and rustdoc at rustup's, or put
 `~/.cargo/bin` first. A single debug build is `./gradlew :app:assembleDebug`.
-Without a `keystore.properties`, release builds are signed with the debug key.
+Without a `keystore.properties`, release builds are left unsigned (pass `-Plumenfall.noKeystore` to get that even when one exists).
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 Maintainers: [`docs/releasing.md`](docs/releasing.md).

@@ -2,7 +2,25 @@
 
 Publishing is confirmed separately for every release. A local build publishes
 nothing until you pass `--publish` and type the exact version at the prompt.
-There is no `--yes` switch and no release workflow in CI; CI only runs the gate.
+There is no `--yes` switch and no release workflow in CI; CI only runs the gate
+and builds the unsigned release APK.
+
+## How a release is built
+
+The shipped APK is **CI's Linux build, signed locally**. CI's `gate` job builds
+the unsigned release APK and uploads it as the `release-apk` artifact (retained
+90 days). `scripts/release.sh` downloads the artifact from the successful CI run
+for the exact commit being released and signs it with `apksigner` through the
+Gradle task `signPrebuiltRelease`, which reads `keystore.properties` itself. Nothing is
+rebuilt on the Mac.
+
+Why not build on the Mac: the macOS and Linux NDK packages produce different
+native libraries, so a Mac-built APK differs from what F-Droid builds (on Linux)
+and could never be reproduced. The Linux CI build is therefore canonical. Because
+v2/v3 signatures live in a block outside the zip entries, signing leaves every
+entry untouched, and F-Droid's build matches the GitHub APK entry for entry. The
+script enforces this: the signed APK must have no v1 signature files, and its
+entry listing and per-entry CRCs must equal the unsigned artifact's.
 
 ## One-time setup
 
@@ -26,7 +44,7 @@ On the maintainer's machine:
    just signing-fingerprint
    ```
 
-   The recipe builds the release APK and prints the certificate's SHA-256 as its
+   The recipe builds a release APK locally with the release key and prints the certificate's SHA-256 as its
    last line. Put that single lowercase hex line in `docs/signing-cert.sha256`
    (Gradle's output is printed before it, so don't redirect the whole command).
    Review and commit `docs/signing-cert.sha256`. It is public information. The
@@ -35,7 +53,8 @@ On the maintainer's machine:
 
 ## Releasing
 
-Use a clean `main` equal to `origin/main`. The version is stamped with
+Use a clean `main` equal to `origin/main`, pushed, with its CI run finished and
+green (the release script looks it up with `gh run list --commit`). The version is stamped with
 `scripts/bundle-version.sh X.Y.Z`, which sets `versionName` in
 `app/build.gradle.kts` and the crate version, and derives
 `versionCode = major * 10000 + minor * 100 + patch` (each component under 100).
@@ -50,8 +69,11 @@ just release X.Y.Z
 
 This checks the preflight conditions (branch, clean tree, `origin/main`,
 versions, notes, tag not taken, `docs/signing-cert.sha256`), runs `just gate`,
-builds the signed APK, compares its certificate with the committed fingerprint,
-and writes `dist/Lumenfall-X.Y.Z.apk` and `dist/Lumenfall-X.Y.Z.apk.sha256`.
+finds the successful `ci.yml` push run whose head is this commit (failing if there
+is none, it is unfinished or it failed), downloads its `release-apk` artifact,
+records the unsigned APK's SHA-256, signs it, compares the certificate with the
+committed fingerprint, checks the contents match the unsigned APK, and writes
+`dist/Lumenfall-X.Y.Z.apk` and `dist/Lumenfall-X.Y.Z.apk.sha256`.
 
 To publish:
 
@@ -63,6 +85,13 @@ After the same checks it shows the tag, checksum and notes and asks you to type
 the version. Only then does it create the annotated tag `vX.Y.Z`, push it, and
 run `gh release create` with the APK, checksum and notes. The release asset is
 named `Lumenfall-X.Y.Z.apk`, which the F-Droid recipe's `Binaries` URL expects.
+
+## Building an unsigned release locally
+
+`-Plumenfall.noKeystore` makes Gradle ignore `keystore.properties` even when it
+exists, so `./gradlew :app:assembleRelease -Plumenfall.noKeystore` yields an
+unsigned `app-release-unsigned.apk` (useful to compare with CI's artifact). With
+or without the keystore, a release build is never signed with the debug key.
 
 ## Device smoke run
 
@@ -101,9 +130,9 @@ makes `cargoNdkBuild` skip itself, and fail with a clear message if
 `app/build/rustJniLibs/arm64-v8a/liblumenfall_core.so` is missing. Normal builds
 do not set it.
 
-Before tagging, compare the repro APK hash CI printed (the `repro-check: identical`
-line of the gate step, also on the run summary) with the one `just repro-check`
-prints locally; the gate only proves two builds on the *same* host agree.
+The recipe's `Binaries` URL points at the GitHub APK, which is CI's own Linux
+build plus a signature, so F-Droid's Linux build reproduces it. There is no
+macOS-versus-Linux hash comparison to do before tagging any more.
 
 Later releases: F-Droid's `UpdateCheckMode: Tags` notices the new `vX.Y.Z` tag,
 and `AutoUpdateMode: Version` adds the build entry automatically. F-Droid builds

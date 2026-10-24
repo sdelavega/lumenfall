@@ -28,7 +28,7 @@ rust-test:
 kotlin-test:
     ./gradlew :app:testDebugUnitTest --console=plain
 
-# Release APK (signed with the release key if keystore.properties exists, else the debug key),
+# Release APK (signed with the release key if keystore.properties exists, else unsigned),
 # then reject developer home paths in the freshly built native library and anywhere inside
 # the APK (native library and dex included). The build must have produced the library.
 assemble-release:
@@ -84,7 +84,8 @@ deny:
 # Everything CI and a release require, in order.
 gate: no-home-paths header rust-test deny kotlin-test lint shim-check wallpapers-lock assemble-release smoke-manifest-check repro-check
 
-# Build the release APK and print its signing certificate's SHA-256, for docs/signing-cert.sha256.
+# Build the release APK locally and print its signing certificate's SHA-256, for
+# docs/signing-cert.sha256 (a local build only; shipped APKs come from CI via release.sh).
 signing-fingerprint:
     ./gradlew :app:assembleRelease --console=plain
     scripts/apk-cert-sha256.sh app/build/outputs/apk/release/*.apk
