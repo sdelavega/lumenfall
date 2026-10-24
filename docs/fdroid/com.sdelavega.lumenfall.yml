@@ -65,7 +65,7 @@ Builds:
 
 # Value to be filled in by the maintainer after running `just signing-fingerprint`
 # (the SHA-256 recorded in docs/signing-cert.sha256, lowercase hex, no colons).
-AllowedAPKSigningKeys: 93c44cede64dbea401b042442bd055164c5abd8c2822fca61ea8fada6e52c843
+AllowedAPKSigningKeys: ff01c5f6726274800a11b7bd644719c0ef717620f73ec87900ee57191790cee1
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
