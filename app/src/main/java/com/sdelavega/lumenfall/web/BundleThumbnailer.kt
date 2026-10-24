@@ -236,8 +236,28 @@ object BundleThumbnailer {
         }
     }
 
-    private fun bundledCacheDir(context: Context): File =
-        File(context.applicationContext.filesDir, "bundled-thumbnails").apply { mkdirs() }
+    /** versionCode the cache was last validated against in this process. */
+    @Volatile
+    private var validatedFor: Long? = null
+
+    private fun bundledCacheDir(context: Context): File {
+        val app = context.applicationContext
+        val dir = File(app.filesDir, "bundled-thumbnails").apply { mkdirs() }
+        // Bundled wallpapers only change with an app update, so a new versionCode
+        // means any cached thumbnail or failed-marker may be stale.
+        val version = runCatching {
+            app.packageManager.getPackageInfo(app.packageName, 0).longVersionCode
+        }.getOrNull() ?: return dir
+        if (validatedFor != version) {
+            synchronized(this) {
+                if (validatedFor != version) {
+                    runCatching { BundledThumbnailCache.invalidateIfStale(dir, version) }
+                    validatedFor = version
+                }
+            }
+        }
+        return dir
+    }
 
     private fun bundledFailedMarker(context: Context, meta: BundleMeta): File? {
         val folder = BundledWallpapers.folderFor(meta.id) ?: return null
