@@ -27,7 +27,7 @@ entry listing and per-entry CRCs must equal the unsigned artifact's.
 On the maintainer's machine:
 
 1. Install rustup (the pinned toolchain in `rust-toolchain.toml` installs on
-   first use), JDK 17, the Android SDK with NDK `27.3.13750724`, and
+   first use), JDK 17 or newer, the Android SDK with NDK `27.3.13750724`, and
    `cargo install cargo-ndk --locked --version 4.1.2`, `cargo-deny`, `just`.
    `node` is optional (bridge-shim syntax check). Install GitHub CLI and
    authenticate it for the repository. If Homebrew's Rust precedes rustup on

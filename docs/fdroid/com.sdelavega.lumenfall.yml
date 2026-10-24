@@ -34,14 +34,12 @@ Repo: https://github.com/sdelavega/lumenfall.git
 Builds:
   - versionName: 1.0.0
     versionCode: 10000
-    # A tag here; use the full commit hash when opening the fdroiddata MR.
-    commit: v1.0.0
+    # Full commit hash of v1.0.0 (as submitted in fdroiddata !54054).
+    commit: 56d523fd40acebee2424dfef300c634dd57d54ff
     subdir: app
     timeout: 20000
-    sudo:
-      - apt-get update
-      - apt-get install -y openjdk-17-jdk-headless
-      - update-java-alternatives -s java-1.17.0-openjdk-amd64
+    # No sudo/JDK step: the buildserver's default JDK (21 on Debian trixie) produces the
+    # same APK as CI's JDK 17 — the app is all Kotlin, compiled to dex by R8.
     srclibs:
       - rustup@1.25.1
     binary: https://github.com/sdelavega/lumenfall/releases/download/v%v/Lumenfall-%v.apk

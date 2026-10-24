@@ -93,7 +93,7 @@ Report vulnerabilities as described in [`SECURITY.md`](SECURITY.md).
 ## Build from source
 
 You need rustup (it installs the toolchain pinned in `rust-toolchain.toml`),
-the Android SDK with NDK `27.3.13750724`, JDK 17, `cargo-ndk` 4.1.2,
+the Android SDK with NDK `27.3.13750724`, JDK 17 or newer, `cargo-ndk` 4.1.2,
 `cargo-deny` and `just`. `node` is optional and enables the bridge-shim
 syntax check.
 
