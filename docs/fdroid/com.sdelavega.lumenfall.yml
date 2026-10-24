@@ -7,8 +7,8 @@
 # which gets rustup from the `rustup@1.25.1` srclib, runs
 # `$$rustup$$/rustup-init.sh -y --default-toolchain ... --target ...`, then
 # `source $HOME/.cargo/env`. ArcaneChat drives Rust through its own script.
-# UNTESTED ON A BUILD SERVER (maintainer must test-build): the cargo-ndk install,
-# the direct `cargo ndk` invocation and the PATH handling are this project's own.
+# Build steps below are the ones the F-Droid buildserver built successfully (!54054); the
+# cargo-ndk install, the direct `cargo ndk` invocation and the PATH handling are this project's own.
 # fdroidserver deletes gradlew before `build:`, so the .so is built here, not via
 # Gradle, with the exact command and RUSTFLAGS of cargoNdkBuild in
 # app/build.gradle.kts so the output matches the GitHub APK. The GitHub APK is
@@ -36,30 +36,38 @@ Builds:
     versionCode: 10000
     # Full commit hash of v1.0.0 (as submitted in fdroiddata !54054).
     commit: 56d523fd40acebee2424dfef300c634dd57d54ff
-    subdir: app
     timeout: 20000
-    # No sudo/JDK step: the buildserver's default JDK (21 on Debian trixie) produces the
-    # same APK as CI's JDK 17 — the app is all Kotlin, compiled to dex by R8.
-    srclibs:
-      - rustup@1.25.1
-    binary: https://github.com/sdelavega/lumenfall/releases/download/v%v/Lumenfall-%v.apk
+    subdir: app
+    # clang is the HOST linker for cargo's build scripts and proc-macros only (cargo-ndk's
+    # own install and the build scripts of our dependencies); the Android target is
+    # linked with the NDK's clang/lld. The buildserver has no cc on PATH, hence this step
+    # and the CC / CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER exports below.
+    # There is no JDK step: the buildserver's default JDK (21 on Debian trixie) produces
+    # the same APK as CI's JDK 17 (the app is all Kotlin, compiled to dex by R8).
+    sudo:
+      - apt-get update
+      - apt-get install -y clang
     gradle:
       - yes
-    gradleprops:
-      - lumenfall.prebuiltJni
-    ndk: 27.3.13750724
+    binary: https://github.com/sdelavega/lumenfall/releases/download/v%v/Lumenfall-%v.apk
+    srclibs:
+      - rustup@1.25.1
     build:
-      - $$rustup$$/rustup-init.sh -y --default-toolchain 1.99.1 --target aarch64-linux-android --profile minimal
+      - $$rustup$$/rustup-init.sh -y --default-toolchain 1.99.1 --target aarch64-linux-android
+        --profile minimal
       - source $HOME/.cargo/env
-      - cargo install cargo-ndk --version 4.1.2 --locked
+      - export CC=clang CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang && cargo
+        install cargo-ndk --version 4.1.2 --locked
       # Same command and --remap-path-prefix triple as cargoNdkBuild (workspace
       # root, CARGO_HOME, RUSTUP_HOME), run from the repository root.
-      - >-
-        source $HOME/.cargo/env && root=$(cd .. && pwd) &&
-        cd "$root" &&
-        RUSTFLAGS="--remap-path-prefix=$root=/lumenfall --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo --remap-path-prefix=${RUSTUP_HOME:-$HOME/.rustup}=/rustup"
-        cargo ndk -t arm64-v8a --platform 33 -o "$root/app/build/rustJniLibs"
-        build --release --locked -p lumenfall-core
+      - source $HOME/.cargo/env && export CC=clang CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang
+        && root=$(cd .. && pwd) && cd "$root" && RUSTFLAGS="--remap-path-prefix=$root=/lumenfall
+        --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo --remap-path-prefix=${RUSTUP_HOME:-$HOME/.rustup}=/rustup"
+        cargo ndk -t arm64-v8a --platform 33 -o "$root/app/build/rustJniLibs" build
+        --release --locked -p lumenfall-core
+    ndk: 27.3.13750724
+    gradleprops:
+      - lumenfall.prebuiltJni
 
 # Value to be filled in by the maintainer after running `just signing-fingerprint`
 # (the SHA-256 recorded in docs/signing-cert.sha256, lowercase hex, no colons).

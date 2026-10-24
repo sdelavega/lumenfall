@@ -245,6 +245,9 @@ abstract class SignPrebuiltTask @Inject constructor(private val execOps: ExecOpe
             "--ks-key-alias", keyAlias.get(),
             "--ks-pass", "env:LUMENFALL_KS_PASS",
             "--key-pass", "env:LUMENFALL_KEY_PASS",
+            // Keep every entry where the unsigned APK has it: F-Droid copies the signature
+            // onto its own (identical) unsigned build, and re-aligning would break the digest.
+            "--alignment-preserved",
             "--v1-signing-enabled", "false",
             "--v2-signing-enabled", "true",
             "--v3-signing-enabled", "true",

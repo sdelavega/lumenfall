@@ -18,9 +18,20 @@ Why not build on the Mac: the macOS and Linux NDK packages produce different
 native libraries, so a Mac-built APK differs from what F-Droid builds (on Linux)
 and could never be reproduced. The Linux CI build is therefore canonical. Because
 v2/v3 signatures live in a block outside the zip entries, signing leaves every
-entry untouched, and F-Droid's build matches the GitHub APK entry for entry. The
-script enforces this: the signed APK must have no v1 signature files, and its
-entry listing and per-entry CRCs must equal the unsigned artifact's.
+entry untouched, and F-Droid's build matches the GitHub APK entry for entry.
+
+Signing must also leave every entry **where it is**. `signPrebuiltRelease` passes
+`--alignment-preserved` to `apksigner sign`; without it apksigner re-aligns the
+stored entries, which keeps their contents but moves them, and F-Droid's
+`apksigcopier` then cannot graft our signature onto its own (CI-identical) unsigned
+build (this is what happened to 1.0.0). The script enforces the layout by running
+`scripts/apk-parity.sh` on the unsigned artifact and the signed APK: every zip
+entry must have the same header offset in both (a dependency-free `python3` check),
+and `pipx run --spec apksigcopier==1.1.1 apksigcopier compare --unsigned <signed>
+<unsigned>` (exactly F-Droid's check) must succeed. The pin lives in
+`scripts/apk-parity.sh`; it needs `pipx` and `apksigner` (found in the SDK). The
+signed APK must also have no v1 signature files. The apksigcopier check replaces
+the old entry-listing/CRC comparison, which it implies.
 
 ## One-time setup
 
@@ -72,7 +83,7 @@ versions, notes, tag not taken, `docs/signing-cert.sha256`), runs `just gate`,
 finds the successful `ci.yml` push run whose head is this commit (failing if there
 is none, it is unfinished or it failed), downloads its `release-apk` artifact,
 records the unsigned APK's SHA-256, signs it, compares the certificate with the
-committed fingerprint, checks the contents match the unsigned APK, and writes
+committed fingerprint, runs the F-Droid parity checks above, and writes
 `dist/Lumenfall-X.Y.Z.apk` and `dist/Lumenfall-X.Y.Z.apk.sha256`.
 
 To publish:
@@ -85,6 +96,25 @@ After the same checks it shows the tag, checksum and notes and asks you to type
 the version. Only then does it create the annotated tag `vX.Y.Z`, push it, and
 run `gh release create` with the APK, checksum and notes. The release asset is
 named `Lumenfall-X.Y.Z.apk`, which the F-Droid recipe's `Binaries` URL expects.
+
+## Re-signing a published release
+
+If an already published release was signed wrongly (for 1.0.0: re-aligned, so F-Droid
+could not verify it), fix it without retagging:
+
+```sh
+just resign-release X.Y.Z            # build and verify only
+just resign-release X.Y.Z --publish  # then replace the release assets
+```
+
+It requires tag `vX.Y.Z` on origin and the GitHub release `vX.Y.Z` to exist, finds
+the successful push-event `ci.yml` run whose head is the tag's commit, downloads
+its `release-apk` artifact (CI retains it for 90 days; after that, rebuild is not
+possible without a new release), signs it, checks the certificate and the parity
+checks, and writes `dist/Lumenfall-X.Y.Z.apk` and `.sha256`. It runs no gate and
+changes no tag. With `--publish` it shows the release URL and the old and new
+SHA-256, asks you to type the version, then runs `gh release upload ... --clobber`
+for the APK and its checksum. The signature changes but the APK's entries do not.
 
 ## Building an unsigned release locally
 

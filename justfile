@@ -93,3 +93,7 @@ signing-fingerprint:
 # Build, verify and optionally publish a release: just release 1.0.0 [--publish]
 release version *flags:
     scripts/release.sh {{version}} {{flags}}
+
+# Re-sign a published release from its CI build, without retagging: just resign-release 1.0.0 [--publish]
+resign-release version *flags:
+    scripts/release.sh --resign {{version}} {{flags}}
