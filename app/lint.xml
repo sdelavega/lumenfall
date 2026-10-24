@@ -9,6 +9,12 @@
     <issue id="GradleDependency" severity="ignore" />
     <issue id="NewerVersionAvailable" severity="ignore" />
 
+    <!-- targetSdk bumps are deliberate, tested changes. Without this ignore the lint
+         result would depend on which SDK platforms the build machine has installed, so
+         CI and F-Droid builds would start failing whenever Google ships a new SDK.
+         Dependabot and release planning track the bump. -->
+    <issue id="OldTargetApi" severity="ignore" />
+
     <!-- arm64-v8a only by design (minSdk 33 devices are all 64-bit ARM; Apple-Silicon
          emulators use the arm64 image). A ChromeOS x86_64 build is not a goal for 1.0. -->
     <issue id="ChromeOsAbiSupport" severity="ignore" />
