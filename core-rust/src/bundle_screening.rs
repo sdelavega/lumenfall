@@ -165,15 +165,146 @@ fn inspect(js: &str, warnings: &mut Vec<String>, issues: &mut Vec<String>) {
     if js.contains("window.open(") || js.contains("window.open (") {
         issues.push("Attempts to open browser windows".to_string());
     }
-    if js.contains("location.replace(")
-        || js.contains("location.assign(")
-        || js.contains("window.location.replace(")
-        || js.contains("window.location.assign(")
-        || js.contains("location.href")
-        || js.contains("window.location =")
-    {
+    if navigates_away(js) {
         issues.push("Attempts top-level navigation (not appropriate for wallpapers)".to_string());
     }
+}
+
+/// Objects that alias the page's `location`; anything else before a `.location`
+/// (`buffer.location`, `mesh.location`) is an unrelated property.
+const LOCATION_OWNERS: [&str; 6] = ["window", "top", "self", "parent", "document", "globalThis"];
+
+/// True when the script navigates the page away: assigns to `location`,
+/// `location.href` (also via `window.`/`top.`/`document.`...) or calls
+/// `location.assign()`/`location.replace()`. Merely reading the URL
+/// (`location.href` in a comparison or concatenation) is harmless and common
+/// in ordinary Lively wallpapers, so it passes. A textual heuristic like the
+/// rest of the screener: the runtime still refuses main-frame navigation off
+/// the bundle origin.
+fn navigates_away(js: &str) -> bool {
+    let bytes = js.as_bytes();
+    let mut from = 0;
+    let mut local: Option<bool> = None;
+    while let Some(found) = js[from..].find("location") {
+        let start = from + found;
+        let end = start + "location".len();
+        from = end;
+        if start > 0 && is_ident(bytes[start - 1]) || bytes.get(end).is_some_and(|b| is_ident(*b)) {
+            continue;
+        }
+        let bare = if start > 0 && bytes[start - 1] == b'.' {
+            if !owner_before(js, start - 1) {
+                continue;
+            }
+            false
+        } else {
+            true
+        };
+
+        let mut at = skip_ws(bytes, end);
+        let mut is_href = false;
+        if bytes.get(at) == Some(&b'.') {
+            let member = skip_ws(bytes, at + 1);
+            let name_end = ident_end(bytes, member);
+            match &js[member..name_end] {
+                "assign" | "replace" => {
+                    if bytes.get(skip_ws(bytes, name_end)) == Some(&b'(') {
+                        return true;
+                    }
+                    continue;
+                }
+                "href" => {
+                    is_href = true;
+                    at = skip_ws(bytes, name_end);
+                }
+                _ => continue,
+            }
+        }
+        if !is_assignment_op(bytes, at) {
+            continue;
+        }
+        // GLSL `layout(location = 0) in ...` is a shader qualifier, not an assignment.
+        if bare && !is_href && prev_non_ws(bytes, start) == Some(b'(') {
+            continue;
+        }
+        if !bare || is_href || !*local.get_or_insert_with(|| declared_local(js)) {
+            return true;
+        }
+    }
+    false
+}
+
+fn prev_non_ws(bytes: &[u8], at: usize) -> Option<u8> {
+    bytes[..at].iter().rev().find(|b| !b.is_ascii_whitespace()).copied()
+}
+
+fn is_ident(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+}
+
+fn skip_ws(bytes: &[u8], mut at: usize) -> usize {
+    while bytes.get(at).is_some_and(|b| b.is_ascii_whitespace()) {
+        at += 1;
+    }
+    at
+}
+
+fn ident_end(bytes: &[u8], mut at: usize) -> usize {
+    while bytes.get(at).is_some_and(|b| is_ident(*b)) {
+        at += 1;
+    }
+    at
+}
+
+/// The identifier ending just before the `.` at `dot` (skipping nested owners
+/// such as `window.top.`) is one of the `location` aliases.
+fn owner_before(js: &str, dot: usize) -> bool {
+    let bytes = js.as_bytes();
+    let mut start = dot;
+    while start > 0 && is_ident(bytes[start - 1]) {
+        start -= 1;
+    }
+    LOCATION_OWNERS.contains(&&js[start..dot])
+}
+
+/// `=` or a compound assignment, but not `==`, `===` or an arrow `=>`.
+fn is_assignment_op(bytes: &[u8], at: usize) -> bool {
+    match bytes.get(at) {
+        Some(b'=') => !matches!(bytes.get(at + 1), Some(b'=') | Some(b'>')),
+        Some(b'+') => bytes.get(at + 1) == Some(&b'='),
+        Some(b'|' | b'&' | b'?') => bytes.get(at + 1) == bytes.get(at) && bytes.get(at + 2) == Some(&b'='),
+        _ => false,
+    }
+}
+
+/// A bare `location = ...` is only navigation when `location` is the window's;
+/// WebGL code commonly declares its own (`var attribute, uniform, location;`
+/// or a parameter) and assigns it. The script declaring a `location` anywhere
+/// is taken as that case.
+fn declared_local(js: &str) -> bool {
+    ["var", "let", "const", "function"].iter().any(|kw| {
+        js.match_indices(kw).any(|(i, _)| {
+            let bytes = js.as_bytes();
+            let boundary_before = i == 0 || !is_ident(bytes[i - 1]);
+            let after = i + kw.len();
+            if !boundary_before || bytes.get(after).is_some_and(|b| is_ident(*b)) {
+                return false;
+            }
+            // Bytes, not str slices: the 400-byte cap may fall inside a multi-byte char.
+            let tail = &bytes[after..];
+            let stop = tail
+                .iter()
+                .take(400)
+                .position(|c| matches!(c, b';' | b'{' | b'='))
+                .unwrap_or(tail.len().min(400));
+            let b = &tail[..stop];
+            b.windows("location".len()).enumerate().filter(|(_, w)| *w == b"location").any(|(j, _)| {
+                let k = j + "location".len();
+                (j == 0 || !is_ident(b[j - 1]) && b[j - 1] != b'.')
+                    && b.get(k).is_none_or(|c| !is_ident(*c))
+            })
+        })
+    })
 }
 
 fn count(haystack: &str, needle: &str) -> usize {
@@ -291,7 +422,75 @@ mod tests {
     fn top_level_navigation_rejects() {
         let report = BundleScreener::screen("location.replace('missing.html');");
         assert_eq!(report.classification, Classification::Rejected);
-        assert!(report.issues.iter().any(|w| w.contains("top-level navigation")));
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|w| w.contains("top-level navigation"))
+        );
+    }
+
+    fn nav_rejected(js: &str) -> bool {
+        BundleScreener::screen(js)
+            .issues
+            .iter()
+            .any(|w| w.contains("top-level navigation"))
+    }
+
+    #[test]
+    fn reading_location_is_not_navigation() {
+        for js in [
+            "var u = location.href;",
+            "localStorage.getItem(document.location.href + '.gui');",
+            "if (window.location.href === 'x') {}",
+            "if (location.href == 'x' || top.location.href != y) {}",
+            "var q = window.location.search; var h = location.hash;",
+            "const same = location.href===other;",
+            "items.forEach(location => draw(location));",
+            "buffer.location = gl.getUniformLocation(p, id);",
+            "var a, location, b; location = buffer.location;",
+            "function f(location) { location = location + 1; }",
+            "layout(location = 0) in vec3 p;",
+            "var mylocation = 1; mylocation = 2; mylocation.replace('a','b');",
+            "str.location.replace('a');",
+        ] {
+            assert!(!nav_rejected(js), "should not reject: {js}");
+        }
+    }
+
+    #[test]
+    fn multibyte_text_near_declarations_does_not_panic() {
+        for n in 395..405 {
+            let js = format!("var {}é\nlocation = 'x';", "a".repeat(n));
+            let _ = BundleScreener::screen(&js);
+        }
+    }
+
+    #[test]
+    fn navigation_assignments_and_calls_reject() {
+        for js in [
+            "location = 'https://example.com';",
+            "location.href = 'https://example.com';",
+            "location.href='x';",
+            "window.location = 'x';",
+            "window.location.href = 'x';",
+            "top.location = 'x';",
+            "top.location.href = 'x';",
+            "document.location = 'x';",
+            "window.top.location.href += '#x';",
+            "location.href ||= 'x';",
+            "var e = 'é'; location = 'x';",
+            "// function \u{e9}\nvar x = 1; location = 'x';",
+            "location.assign('x');",
+            "location.assign ('x');",
+            "window.location.assign('x');",
+            "location.replace('x');",
+            "top.location.replace('x');",
+            "document.location.replace('x');",
+            "location\n  .href\n  = 'x';",
+        ] {
+            assert!(nav_rejected(js), "should reject: {js}");
+        }
     }
 
     #[test]

@@ -97,8 +97,15 @@ identically on both hosts):
   matches the full blocked domains from the shared blocklist (no TLD stripping,
   which falsely rejected wallpapers such as `segment`-named scripts).
   Trackers/ad domains, crypto miners, ServiceWorker/SharedWorker,
-  `window.open`, `while(true)`, and >10 network call sites reject the import
-  with a reason; network use, eval-family, WebGL, and heavy-GPU patterns
+  `window.open`, top-level navigation, `while(true)`, and >10 network call
+  sites reject the import with a reason. Navigation means *assigning* to
+  `location`, `location.href` (bare or via `window.`/`top.`/`document.`) or
+  calling `location.assign()`/`location.replace()`; merely reading the URL
+  (`document.location.href` in dat.gui, comparisons) passes, and a bare
+  `location = x` is ignored when the script declares its own `location`
+  variable (WebGL renderers do). This rule is Lumenfall's own — ÆtherDesk's
+  WallpaperValidator has no navigation check, and the runtime separately refuses
+  main-frame navigation off the bundle origin; network use, eval-family, WebGL, and heavy-GPU patterns
   downgrade to "limited" (persisted as `screening.json`).
 - **FPS cap** (web shim, `assets/bridge/aetherdesk-shim.js`): `requestAnimationFrame` is throttled to
   `aetherDesk.system.fpsCap` — default 30, clamped 15–60 — sleeping between
