@@ -28,15 +28,14 @@ AETHERDESK = "https://github.com/sdelavega/AetherDesk"
 VENDORED = {"WeatherAether", "GradientWave", "MatrixRain", "NeonCity"}
 # Third-party components bundled inside a vendored wallpaper: folder -> (name, licence).
 # The licence text is found by walking the folder for a licence-named file.
-NESTED = {"WeatherAether": ("three.js", "MIT")}
+NESTED = {"WeatherAether": ("three.js", "MIT"), "NeonCity": ("three.js", "MIT")}
 
 # (heading, [(name, version, licence, source)])
 sections = []
 
-# Copyright holders the vendored files do not state themselves (the vendored folders
-# stay untouched; Neon City ships no licence file: upstream will add one, ruling R27).
+# Neon City's LivelyInfo.json credits the original Lively author; the copyright holder
+# named in its LICENSE.txt (MIT, Stephen de la Vega) is listed as the author here.
 AUTHOR_OVERRIDE = {"NeonCity": "Stephen de la Vega"}
-COPYRIGHT = {"NeonCity": "Copyright (c) 2026 Stephen de la Vega"}
 LICENSE_TEXTS = [
     ("MIT", "scripts/license-texts/MIT.txt"),
     ("Apache-2.0", "scripts/license-texts/Apache-2.0.txt"),
@@ -106,8 +105,6 @@ def txt():
         out.append(f"{title} [{folder}]")
         out.append(f"  Author: {author}")
         out.append(f"  License: {lic}" + (f" (see {folder}/{lf})" if lf else ""))
-        if folder in COPYRIGHT:
-            out.append(f"  {COPYRIGHT[folder]}")
         if source:
             out.append(f"  Source: {source}")
         if nested:
@@ -137,8 +134,6 @@ def md():
         if nested:
             lic = f"{lic}; includes {nested[0]} ({nested[1]})"
             lf = lf or nested[2]
-        if folder in COPYRIGHT:
-            lic = f"{lic} ({COPYRIGHT[folder]})"
         out.append(f"| {title} | `{folder}` | {author} | {lic} | " + (f"`{folder}/{lf}`" if lf else "") + f" | {source} |")
     out += ["", "## Rust crates", "", "| Crate | Version | Licence | Copyright | Repository |", "|---|---|---|---|---|"]
     for n, v, l, r, a in crates:

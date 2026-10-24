@@ -1,4 +1,16 @@
 {
+  "timeMode": {
+    "type": "dropdown",
+    "value": 0,
+    "items": ["Live", "Always night"],
+    "text": "Time"
+  },
+  "weatherMode": {
+    "type": "dropdown",
+    "value": 0,
+    "items": ["Drifting", "Live", "Fixed"],
+    "text": "Weather"
+  },
   "rainIntensity": {
     "type": "slider",
     "value": 60,
@@ -29,6 +41,23 @@
     "min": 0,
     "max": 20,
     "step": 1,
-    "text": "Flying Vehicles"
+    "text": "Traffic Density"
+  },
+  "renderer": {
+    "type": "dropdown",
+    "value": 0,
+    "items": ["Auto", "Classic"],
+    "text": "Renderer"
+  },
+  "locationMode": {
+    "type": "dropdown",
+    "value": 0,
+    "items": ["auto", "manual"],
+    "text": "Location resolution mode"
+  },
+  "manualLocation": {
+    "type": "textbox",
+    "value": "",
+    "text": "City name or ZIP for manual mode"
   }
 }

@@ -72,9 +72,10 @@ licence.
   the name up separately), and web workers are wrapped or refused.
 - Imported bundles are screened when you import them; ones that use trackers,
   miners or other unsafe patterns are rejected.
-- Weather Aether contacts only Open-Meteo: `api.open-meteo.com` (forecast) and
-  `geocoding-api.open-meteo.com` (city search). Its ipapi.co (IP location) and
-  BigDataCloud (place name) calls run only when the host sets the
+- Weather Aether and Neon City (which shows live weather) contact only
+  Open-Meteo: `api.open-meteo.com` (forecast) and
+  `geocoding-api.open-meteo.com` (city search). Their ipapi.co (IP location)
+  and BigDataCloud (place name) calls run only when the host sets the
   `ipGeolocation` capability. Lumenfall never sets it, and its network policy
   blocks both hosts as defence in depth. Location is
   optional, per wallpaper, and either approximate or precise; you can type a

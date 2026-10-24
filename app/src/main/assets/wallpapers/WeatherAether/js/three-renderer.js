@@ -18,14 +18,34 @@
 
 var THREE_ATMOSPHERE_REVISION='precipitation-modulation-1';
 var THREE_QUALITY_PROFILES={
-  eco:{name:'eco',pixelRatio:0.55,fps:15,motionFps:30,steps:4,rainCount:80,freezingCount:80,snowCount:70,hailCount:100},
-  balanced:{name:'balanced',pixelRatio:0.85,fps:24,motionFps:60,steps:7,rainCount:160,freezingCount:160,snowCount:130,hailCount:190},
+  eco:{name:'eco',pixelRatio:0.4,fps:6,motionFps:15,rainFps:6,steps:1,rainCount:30,freezingCount:60,snowCount:20,hailCount:32},
+  balanced:{name:'balanced',pixelRatio:0.75,fps:30,motionFps:60,steps:5,cloudStepsByCondition:{partly:1,overcast:1,rain:1,freezing:1,thunder:1,hail:1},rainCount:96,freezingCount:96,snowCount:50,hailCount:64},
   showcase:{name:'showcase',pixelRatio:1.15,fps:30,motionFps:60,steps:9,rainCount:240,freezingCount:240,snowCount:200,hailCount:280}
 };
 
 function getThreeQualityProfile(){
-  var requested=new URLSearchParams(window.location.search).get('quality');
+  var system=window.aetherDesk&&window.aetherDesk.system;
+  var requested=system?system.qualityMode:new URLSearchParams(window.location.search).get('quality');
   return THREE_QUALITY_PROFILES[requested]||THREE_QUALITY_PROFILES.balanced;
+}
+
+function syncThreeQualityProfile(){
+  var state=S.threeAtmosphere;
+  if(!S.useThreeRenderer||!state||!state.quality.name)return;
+  var quality=getThreeQualityProfile();
+  if(state.quality===quality)return;
+  state.quality=quality;
+  setupThreeNoiseCache(state);
+  state.renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,quality.pixelRatio));
+  state.material.uniforms.uCloudSteps.value=quality.steps;
+  for(var kind of ['Rain','Freezing','Snow','Hail']){
+    var particles=S['three'+kind];
+    if(!particles)continue;
+    particles.qualityCount=quality[kind.toLowerCase()+'Count'];
+    particles.material.uniforms.uPixelRatio.value=state.renderer.getPixelRatio();
+  }
+  state.nextForegroundFrame=0;state.nextAtmosphereFrame=0;state.nextPresentationFrame=0;
+  resizeThreeAtmosphere(cssW(),cssH());
 }
 
 var THREE_SKY_VERTEX=[
@@ -33,6 +53,27 @@ var THREE_SKY_VERTEX=[
   'void main(){',
   '  vUv=uv;',
   '  gl_Position=vec4(position.xy,0.0,1.0);',
+  '}'
+].join('\n');
+
+var THREE_CLOUD_HASH=[
+  'float rawCloudHash(vec3 p){',
+  '  p=fract(p*0.1031);',
+  '  p+=dot(p,p.yzx+33.33);',
+  '  return fract((p.x+p.y)*p.z);',
+  '}'
+].join('\n');
+
+var THREE_NOISE_CACHE_FRAGMENT=[
+  'precision mediump float;',
+  THREE_CLOUD_HASH,
+  'void main(){',
+  '  highp vec2 pixel=floor(gl_FragCoord.xy);',
+  '  highp vec3 cell=vec3(mod(pixel.x,64.0),mod(pixel.y,64.0),floor(pixel.x/64.0)+floor(pixel.y/64.0)*8.0);',
+  '  highp float value=rawCloudHash(cell);',
+  '  highp vec2 encoded=fract(value*vec2(1.0,255.0));',
+  '  encoded.x-=encoded.y/255.0;',
+  '  gl_FragColor=vec4(encoded,0.0,1.0);',
   '}'
 ].join('\n');
 
@@ -64,37 +105,78 @@ var THREE_SKY_FRAGMENT=[
   'uniform float uCloudSkyBounce;',
   'uniform float uCloudSteps;',
   'uniform float uTime;',
-  'float hash(vec2 p){',
+  '#if USE_CLOUD_NOISE_CACHE == 1',
+  'uniform highp sampler2D uCloudNoise;',
+  '#endif',
+  // Pixel coordinates exceed mediump's dot-product range on mobile GPUs.
+  // Keep the hash highp to avoid a diagonal NaN boundary in the sky grain.
+  'highp float hash(highp vec2 p){',
   '  return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123);',
   '}',
+  '#if USE_CLOUD_NOISE_CACHE == 0',
+  THREE_CLOUD_HASH,
+  '#endif',
   'float hash3(vec3 p){',
-  '  p=fract(p*0.1031);',
-  '  p+=dot(p,p.yzx+33.33);',
-  '  return fract((p.x+p.y)*p.z);',
+  '#if USE_CLOUD_NOISE_CACHE == 1',
+  '  ivec3 cell=ivec3(p)&ivec3(63);',
+  '  ivec2 pixel=cell.xy+ivec2((cell.z&7)*64,(cell.z>>3)*64);',
+  '  highp vec2 encoded=texelFetch(uCloudNoise,pixel,0).rg;',
+  '  return encoded.x+encoded.y/255.0;',
+  '#else',
+  '  return rawCloudHash(p);',
+  '#endif',
   '}',
+  '#if USE_CLOUD_NOISE_CACHE == 0',
   'float noise3(vec3 p){',
   '  vec3 i=floor(p);',
   '  vec3 f=fract(p);',
   '  f=f*f*(3.0-2.0*f);',
   '  return mix(mix(mix(hash3(i),hash3(i+vec3(1.0,0.0,0.0)),f.x),mix(hash3(i+vec3(0.0,1.0,0.0)),hash3(i+vec3(1.0,1.0,0.0)),f.x),f.y),mix(mix(hash3(i+vec3(0.0,0.0,1.0)),hash3(i+vec3(1.0,0.0,1.0)),f.x),mix(hash3(i+vec3(0.0,1.0,1.0)),hash3(i+vec3(1.0,1.0,1.0)),f.x),f.y),f.z);',
   '}',
+  '#endif',
+  // Let the texture unit interpolate XY after applying the cubic fade. At
+  // atlas edges, fetch wrapped corners explicitly to avoid another Z slice.
+  '#if USE_CLOUD_NOISE_CACHE == 1',
+  'float cloudNoiseSlice(float ix,float iy,float iz,float u,float v){',
+  '  float x=mod(ix,64.0),y=mod(iy,64.0),z=mod(iz,64.0);',
+  '  if(x<63.0&&y<63.0){',
+  '    vec2 encoded=texture2D(uCloudNoise,vec2((mod(z,8.0)*64.0+x+u+0.5)/512.0,(floor(z/8.0)*64.0+y+v+0.5)/512.0)).rg;',
+  '    return encoded.x+encoded.y/255.0;',
+  '  }',
+  '  return mix(mix(hash3(vec3(ix,iy,iz)),hash3(vec3(ix+1.0,iy,iz)),u),mix(hash3(vec3(ix,iy+1.0,iz)),hash3(vec3(ix+1.0,iy+1.0,iz)),u),v);',
+  '}',
+  'float cachedNoise3(vec3 p){',
+  '  float ix=floor(p.x),iy=floor(p.y),iz=floor(p.z);',
+  '  float fx=p.x-ix,fy=p.y-iy,fz=p.z-iz;',
+  '  float u=fx*fx*(3.0-2.0*fx),v=fy*fy*(3.0-2.0*fy),w=fz*fz*(3.0-2.0*fz);',
+  '  return mix(cloudNoiseSlice(ix,iy,iz,u,v),cloudNoiseSlice(ix,iy,iz+1.0,u,v),w);',
+  '}',
+  '#endif',
   'float cloudNoise(vec3 p){',
+  '#if USE_CLOUD_NOISE_CACHE == 1',
+  '  return cachedNoise3(p)*0.68+cachedNoise3(p*2.07+7.4)*0.32;',
+  '#else',
   '  return noise3(p)*0.68+noise3(p*2.07+7.4)*0.32;',
+  '#endif',
   '}',
   'void main(){',
   '  float lower=smoothstep(0.0,0.52,vUv.y);',
   '  float upper=smoothstep(0.42,1.0,vUv.y);',
   '  vec3 color=mix(uBottom,uMiddle,lower);',
   '  color=mix(color,uTop,upper);',
-  '  vec2 starGrid=vec2(180.0,100.0);',
-  '  vec2 starCell=floor(vUv*starGrid);',
-  '  vec2 starLocal=fract(vUv*starGrid)-0.5;',
-  '  float starSeed=hash(starCell);',
-  '  float starRadius=mix(0.035,0.105,hash(starCell+17.3));',
-  '  float starPoint=(1.0-smoothstep(starRadius,starRadius*2.1,length(starLocal)))*step(0.9945,starSeed);',
-  '  float twinkle=0.62+0.38*sin(uTime*(0.7+hash(starCell+4.1)*1.8)+starSeed*20.0);',
-  '  float horizonFade=smoothstep(0.10,0.42,vUv.y);',
-  '  color+=vec3(0.84,0.89,1.0)*starPoint*twinkle*horizonFade*uStarVisibility;',
+  '  if(uStarVisibility>0.0&&vUv.y>0.10){',
+  '    vec2 starGrid=vec2(180.0,100.0);',
+  '    vec2 starCell=floor(vUv*starGrid);',
+  '    float starSeed=hash(starCell);',
+  '    if(starSeed>=0.9945){',
+  '      vec2 starLocal=fract(vUv*starGrid)-0.5;',
+  '      float starRadius=mix(0.035,0.105,hash(starCell+17.3));',
+  '      float starPoint=1.0-smoothstep(starRadius,starRadius*2.1,length(starLocal));',
+  '      float twinkle=0.62+0.38*sin(uTime*(0.7+hash(starCell+4.1)*1.8)+starSeed*20.0);',
+  '      float horizonFade=smoothstep(0.10,0.42,vUv.y);',
+  '      color+=vec3(0.84,0.89,1.0)*starPoint*twinkle*horizonFade*uStarVisibility;',
+  '    }',
+  '  }',
   '  float hazeField=1.0-smoothstep(0.0,0.46,vUv.y);',
   '  float hazeAlpha=(0.025+uHaze*0.16)*hazeField;',
   '  color=mix(color,vec3(0.863,0.882,0.910),hazeAlpha);',
@@ -122,17 +204,20 @@ var THREE_SKY_FRAGMENT=[
   '        samplePos.y+=sin(uTime*0.019+samplePos.x*0.34)*0.022;',
   '        float vertical=smoothstep(-0.14,0.01,samplePos.y)*(1.0-smoothstep(0.30,0.46,samplePos.y));',
   '        vec3 fieldPos=vec3(samplePos.x*0.82,samplePos.y*2.55,samplePos.z*0.82);',
+  '        float gradientStep=0.085;',
   '        float field=cloudNoise(fieldPos);',
   '        float density=smoothstep(threshold,threshold+0.16,field)*vertical*uCloudDensity;',
-  '        float gradientStep=0.085;',
+  '        if(density<=0.0)continue;',
   '        float gradientX=cloudNoise(fieldPos+vec3(gradientStep,0.0,0.0))-field;',
   '        float gradientY=cloudNoise(fieldPos+vec3(0.0,gradientStep,0.0))-field;',
   '        vec3 surfaceNormal=normalize(vec3(-gradientX,-gradientY,0.075));',
-  '        vec3 lightDirection=normalize(uCloudLightOffset);',
+  '        vec3 lightDirection=uCloudLightOffset;',
   '        float facing=clamp(dot(surfaceNormal,lightDirection)*0.5+0.5,0.0,1.0);',
-  '        float highlightLobe=pow(facing,4.0);',
+  '        float facingSquared=facing*facing;',
+  '        float highlightLobe=facingSquared*facingSquared;',
   '        float crown=smoothstep(-0.04,0.36,samplePos.y);',
-  '        float transmission=exp(-opticalDepth*(1.35+uCloudDepthShadow*4.0));',
+  '        float transmission=1.0;',
+  '        if(opticalDepth>0.0)transmission=exp(-opticalDepth*(1.35+uCloudDepthShadow*4.0));',
   '        float illumination=uCloudLightBase+facing*uCloudLightStrength*0.55+highlightLobe*uCloudLightStrength*0.18+crown*uCloudTopLight;',
   '        illumination=illumination*mix(0.44,1.0,transmission)+uCloudSkyBounce*(1.0-transmission);',
   '        illumination=clamp(illumination,0.04,1.0);',
@@ -381,9 +466,9 @@ function reportWeatherRendererStatus(){
     renderer:S.renderer||(S.useThreeRenderer?'three':'canvas'),
     revision:THREE_ATMOSPHERE_REVISION,
     quality:S.threeAtmosphere?S.threeAtmosphere.quality.name:getThreeQualityProfile().name,
-    targetFps:S.threeAtmosphere?S.threeAtmosphere.quality.fps:getThreeQualityProfile().fps,
-    motionTargetFps:S.threeAtmosphere?S.threeAtmosphere.quality.motionFps:getThreeQualityProfile().motionFps,
-    steps:S.threeAtmosphere?S.threeAtmosphere.quality.steps:getThreeQualityProfile().steps,
+    targetFps:S.threeAtmosphere?(S.threeAtmosphere.targetFps||S.threeAtmosphere.quality.fps):getThreeQualityProfile().fps,
+    motionTargetFps:S.threeAtmosphere?getThreeMotionFps(S.threeAtmosphere,atmosphere):getThreeQualityProfile().motionFps,
+    steps:getThreeCloudSteps(S.threeAtmosphere||{quality:getThreeQualityProfile()},atmosphere),
     volume:volume,
     rain:!!(S.threeRain&&S.threeRain.active),
     freezing:!!(S.threeFreezing&&S.threeFreezing.active),
@@ -407,6 +492,44 @@ function reportWeatherRendererStatus(){
     }
   }
   if(window.parent!==window)window.parent.postMessage(status,'*');
+}
+
+// A periodic 64³ lattice occupies one RGBA8 atlas. Pack each corner into two
+// channels so cloud interpolation keeps finer precision than an 8-bit lookup.
+function createThreeNoiseTarget(api,state){
+  var target=new api.WebGLRenderTarget(512,512,{depthBuffer:false,stencilBuffer:false});
+  target.texture.generateMipmaps=false;
+  var geometry=new api.PlaneGeometry(2,2);
+  var material=new api.ShaderMaterial({vertexShader:THREE_SKY_VERTEX,fragmentShader:THREE_NOISE_CACHE_FRAGMENT,depthTest:false,depthWrite:false});
+  var scene=new api.Scene(),mesh=new api.Mesh(geometry,material);
+  mesh.frustumCulled=false;scene.add(mesh);
+  S.threeShaderError=null;
+  try{
+    state.renderer.setRenderTarget(target);
+    state.renderer.render(scene,state.camera);
+    if(S.threeShaderError)throw new Error(S.threeShaderError);
+    var pixels=new Uint8Array(64*4),varied=false;
+    state.renderer.readRenderTargetPixels(target,0,0,64,1,pixels);
+    for(var i=0;i<pixels.length;i+=4){
+      if(pixels[i+3]!==255)throw new Error('Cloud noise cache has incomplete GPU data');
+      if(pixels[i]!==pixels[0]||pixels[i+1]!==pixels[1])varied=true;
+    }
+    if(!varied)throw new Error('Cloud noise cache has no varying GPU data');
+    return target;
+  }catch(error){
+    S.pendingRendererDemotion=null;target.dispose();throw error;
+  }finally{
+    state.renderer.setRenderTarget(null);geometry.dispose();material.dispose();
+  }
+}
+
+function setupThreeNoiseCache(state){
+  var enabled=state.quality.name!=='showcase';
+  if(enabled&&!state.noiseTarget)state.noiseTarget=createThreeNoiseTarget(window.WeatherAetherThree,state);
+  var defines=state.material.defines||(state.material.defines={});
+  var mode=enabled?1:0;
+  if(defines.USE_CLOUD_NOISE_CACHE!==mode){defines.USE_CLOUD_NOISE_CACHE=mode;state.material.needsUpdate=true;}
+  state.material.uniforms.uCloudNoise.value=enabled?state.noiseTarget.texture:null;
 }
 
 function initializeThreeAtmosphere(){
@@ -435,7 +558,7 @@ function initializeThreeAtmosphere(){
       vertexShader:THREE_SKY_VERTEX,fragmentShader:THREE_SKY_FRAGMENT,
       depthTest:false,depthWrite:false,
       uniforms:{
-        uTop:{value:new api.Color()},uMiddle:{value:new api.Color()},uBottom:{value:new api.Color()},
+        uCloudNoise:{value:null},uTop:{value:new api.Color()},uMiddle:{value:new api.Color()},uBottom:{value:new api.Color()},
         uLightColor:{value:new api.Color()},uLightPosition:{value:new api.Vector2(0.5,0.5)},
         uViewportScale:{value:new api.Vector2(1,1)},uHaze:{value:0},uDiffusion:{value:0},
         uLightAlpha:{value:0},uCloudDensity:{value:0},uMinRatio:{value:1},
@@ -460,16 +583,20 @@ function initializeThreeAtmosphere(){
     presentationScene.add(presentationMesh);
     S.threeAtmosphere={
       renderer:renderer,scene:scene,presentationScene:presentationScene,camera:camera,material:material,
-      presentationMaterial:presentationMaterial,atmosphereTarget:atmosphereTarget,quality:quality,
+      presentationMaterial:presentationMaterial,presentationMesh:presentationMesh,atmosphereTarget:atmosphereTarget,quality:quality,
       lastPaintKey:null,lastFrame:0,lastPresentationFrame:0,nextAtmosphereFrame:0,nextPresentationFrame:0,
       latestMetrics:null,latestMotionMetrics:null,
       performance:{startedAt:0,lastRenderedAt:0,frames:0,submitTotal:0,submitMax:0,intervals:[]},
       motionPerformance:{startedAt:0,lastRenderedAt:0,frames:0,submitTotal:0,submitMax:0,intervals:[]}
     };
+    setupThreeNoiseCache(S.threeAtmosphere);
     initializeThreeRain(api,S.threeAtmosphere);
     initializeThreeFreezing(api,S.threeAtmosphere);
     initializeThreeSnow(api,S.threeAtmosphere);
     initializeThreeHail(api,S.threeAtmosphere);
+    // Particle motion lives in the vertex shaders; these object transforms stay static.
+    if(presentationScene.updateMatrixWorld)presentationScene.updateMatrixWorld(true);
+    presentationScene.matrixWorldAutoUpdate=false;
     S.threeShaderError=null;
     S.useThreeRenderer=true;canvas.style.display='block';
     canvas.addEventListener('webglcontextlost',function(event){
@@ -478,6 +605,8 @@ function initializeThreeAtmosphere(){
     });
     return true;
   }catch(error){
+    if(S.threeAtmosphere&&S.threeAtmosphere.noiseTarget)S.threeAtmosphere.noiseTarget.dispose();
+    if(renderer&&renderer.dispose)renderer.dispose();
     S.useThreeRenderer=false;S.threeAtmosphere=null;canvas.style.display='none';
     S.threeShaderError=String(error&&error.message?error.message:error);
     console.warn('Weather Aether: WebGL atmosphere unavailable; using Canvas fallback.',error);
@@ -522,6 +651,19 @@ function rendersThreeRain(){
   return!!(S.useThreeRenderer&&S.threeRain&&S.threeRain.active);
 }
 
+// Lighting palettes change by weather phase and quarter hour, not per particle
+// frame. Keep clock/key allocations separate from the motion cadence.
+function getThreeLightingKey(atmosphere,timestamp){
+  var cache=getThreeLightingKey;
+  if(!cache.nextCheck||timestamp>=cache.nextCheck||
+      cache.condition!==atmosphere.condition||cache.isDay!==atmosphere.isDay){
+    cache.key=getCloudLightingKey(atmosphere,wallpaperNow());
+    cache.condition=atmosphere.condition;cache.isDay=atmosphere.isDay;
+    cache.nextCheck=timestamp+1000;
+  }
+  return cache.key;
+}
+
 function updateThreeRain(timestamp,atmosphere){
   var rain=S.threeRain;
   if(!rain)return;
@@ -538,7 +680,7 @@ function updateThreeRain(timestamp,atmosphere){
   rain.material.uniforms.uSpeed.value=S.props.animationSpeed*lerp(0.56,1.28,intensity)*(0.84+atmosphere.motionEnergy*0.34);
   rain.material.uniforms.uDropScale.value=(atmosphere.precipitationScale||1)*lerp(0.82,1.12,intensity);
   rain.material.uniforms.uOpacity.value=lerp(0.38,0.80,intensity)*lerp(0.72,1,activity);
-  var lightKey=getCloudLightingKey(atmosphere,wallpaperNow())+':'+atmosphere.condition;
+  var lightKey=getThreeLightingKey(atmosphere,timestamp);
   if(rain.lastLightKey!==lightKey){
     var lighting=getPrecipitationLighting(atmosphere,wallpaperNow());
     rain.material.uniforms.uColor.value.copy(threeColor(lighting.rain));
@@ -605,7 +747,7 @@ function updateThreeFreezing(timestamp,atmosphere){
   freezing.material.uniforms.uDropScale.value=(atmosphere.precipitationScale||1)*lerp(0.84,1.08,intensity);
   freezing.material.uniforms.uIceFraction.value=atmosphere.iceFraction||0.06;
   freezing.material.uniforms.uOpacity.value=lerp(0.42,0.78,intensity)*lerp(0.76,1,activity);
-  var lightKey=getCloudLightingKey(atmosphere,wallpaperNow());
+  var lightKey=getThreeLightingKey(atmosphere,timestamp);
   if(freezing.lastLightKey!==lightKey){
     var lighting=getPrecipitationLighting(atmosphere,wallpaperNow());
     freezing.material.uniforms.uLiquidColor.value.copy(threeColor(lighting.rain));
@@ -672,7 +814,7 @@ function updateThreeSnow(timestamp,atmosphere){
   snow.material.uniforms.uFlutter.value=atmosphere.precipitationFlutter==null?0.72:atmosphere.precipitationFlutter;
   snow.material.uniforms.uGrain.value=atmosphere.precipitationGrain||0;
   snow.material.uniforms.uOpacity.value=lerp(0.54,0.86,intensity)*lerp(0.74,1,activity);
-  var lightKey=getCloudLightingKey(atmosphere,wallpaperNow());
+  var lightKey=getThreeLightingKey(atmosphere,timestamp);
   if(snow.lastLightKey!==lightKey){
     var lighting=getPrecipitationLighting(atmosphere,wallpaperNow());
     var cleanSnow=lerpC(lighting.snow,[248,250,255],atmosphere.isDay?0.62:0.42);
@@ -734,7 +876,7 @@ function updateThreeHail(timestamp,atmosphere){
   hail.material.uniforms.uSpeed.value=S.props.animationSpeed*lerp(0.78,1.34,intensity)*(0.88+atmosphere.motionEnergy*0.36);
   hail.material.uniforms.uPelletScale.value=(atmosphere.precipitationScale||1)*lerp(0.86,1.10,intensity);
   hail.material.uniforms.uOpacity.value=lerp(0.66,0.96,intensity)*lerp(0.76,1,activity);
-  var lightKey=getCloudLightingKey(atmosphere,wallpaperNow());
+  var lightKey=getThreeLightingKey(atmosphere,timestamp);
   if(hail.lastLightKey!==lightKey){
     var lighting=getPrecipitationLighting(atmosphere,wallpaperNow());
     hail.material.uniforms.uColor.value.copy(threeColor(lighting.hail));
@@ -743,7 +885,11 @@ function updateThreeHail(timestamp,atmosphere){
 }
 
 function usesThreeCloudVolume(){
-  return new URLSearchParams(window.location.search).get('cloudModel')!=='planes';
+  var cache=usesThreeCloudVolume,search=window.location.search;
+  if(cache.search!==search){
+    cache.search=search;cache.enabled=new URLSearchParams(search).get('cloudModel')!=='planes';
+  }
+  return cache.enabled;
 }
 
 // Low sunlight benefits from dramatic lateral shading, but reusing that model
@@ -768,6 +914,13 @@ function getThreeCloudShading(atmosphere,track){
 
 function resizeThreeAtmosphere(w,h){
   if(!S.useThreeRenderer||!S.threeAtmosphere)return;
+  S.lastForegroundPaintKey=null;
+  // The transparent celestial/fog overlay is composited every frame too.
+  // Give both layers the same pixel budget while retaining CSS coordinates.
+  var pixelRatio=Math.min(window.devicePixelRatio||1,S.threeAtmosphere.quality.pixelRatio);
+  S.canvas.width=Math.max(1,Math.round(w*pixelRatio));
+  S.canvas.height=Math.max(1,Math.round(h*pixelRatio));
+  S.ctx.setTransform(pixelRatio,0,0,pixelRatio,0,0);
   S.threeAtmosphere.renderer.setSize(w,h,false);
   S.threeAtmosphere.camera.aspect=w/Math.max(1,h);
   S.threeAtmosphere.camera.updateProjectionMatrix();
@@ -859,10 +1012,15 @@ function updateThreeClouds(timestamp){
 function updateThreeAtmosphere(timestamp){
   var state=S.threeAtmosphere;
   var atmosphere=S.atmosphere||deriveAtmosphericState(S.weather);
-  var now=wallpaperNow();
-  var key=[Math.floor(now.getTime()/15000),atmosphere.condition,Math.round(atmosphere.precipitationIntensity*100),atmosphere.isDay?1:0].join(':');
+  var intensity=Math.round((atmosphere.precipitationIntensity||0)*100);
+  var changed=state.lastPaintKey==null||state.lastPaintCondition!==atmosphere.condition||
+    state.lastPaintIntensity!==intensity||state.lastPaintIsDay!==atmosphere.isDay;
+  var now,key=state.lastPaintKey;
+  if(changed||!state.nextPaintCheck||timestamp>=state.nextPaintCheck){
+    now=wallpaperNow();key=Math.floor(now.getTime()/15000);state.nextPaintCheck=timestamp+1000;
+  }
   var uniforms=state.material.uniforms;
-  if(state.lastPaintKey!==key){
+  if(changed||state.lastPaintKey!==key){
     var colors=getPhaseColors();
     var track=getCelestialTrack(now,atmosphere.isDay);
     var lightColor=lerpC([225,238,255],[255,155,72],track.horizonWarmth);
@@ -882,7 +1040,9 @@ function updateThreeAtmosphere(timestamp){
     uniforms.uCloudHighlight.value.copy(threeColor(cloudLight.highlight));
     uniforms.uCloudShadow.value.copy(threeColor(cloudLight.shadow));
     var cloudShading=getThreeCloudShading(atmosphere,track);
-    uniforms.uCloudLightOffset.value.set(cloudShading.offset[0],cloudShading.offset[1],cloudShading.offset[2]);
+    var offset=cloudShading.offset;
+    var offsetLength=Math.sqrt(offset[0]*offset[0]+offset[1]*offset[1]+offset[2]*offset[2])||1;
+    uniforms.uCloudLightOffset.value.set(offset[0]/offsetLength,offset[1]/offsetLength,offset[2]/offsetLength);
     uniforms.uCloudLightBase.value=cloudShading.base;
     uniforms.uCloudLightStrength.value=cloudShading.strength;
     uniforms.uCloudTopLight.value=cloudShading.top;
@@ -890,10 +1050,12 @@ function updateThreeAtmosphere(timestamp){
     uniforms.uCloudSkyBounce.value=cloudShading.bounce;
     var windToward=((atmosphere.windDirection+180)%360)*Math.PI/180;
     uniforms.uCloudWind.value.set(Math.sin(windToward)*atmosphere.motionEnergy,Math.cos(windToward)*atmosphere.motionEnergy);
-    state.lastPaintKey=key;
+    state.lastPaintKey=key;state.lastPaintCondition=atmosphere.condition;
+    state.lastPaintIntensity=intensity;state.lastPaintIsDay=atmosphere.isDay;
   }
   uniforms.uStarVisibility.value=!atmosphere.isDay&&S.props.showParticles?
     (atmosphere.condition==='clear'?1:atmosphere.condition==='partly'?0.38:0):0;
+  uniforms.uCloudSteps.value=getThreeCloudSteps(state,atmosphere);
   uniforms.uTime.value=timestamp/1000;
 }
 
@@ -916,8 +1078,23 @@ function recordThreePerformance(stats,timestamp,submitTime,state,drawCalls){
     submitAverage:stats.frames?stats.submitTotal/stats.frames:0,submitMax:stats.submitMax,
     width:state.renderer.domElement.width,height:state.renderer.domElement.height,drawCalls:drawCalls
   };
-  stats.startedAt=timestamp;stats.frames=0;stats.submitTotal=0;stats.submitMax=0;stats.intervals=[];
+  stats.startedAt=timestamp;stats.frames=0;stats.submitTotal=0;stats.submitMax=0;stats.intervals.length=0;
   return result;
+}
+
+function getThreeCloudSteps(state,atmosphere){
+  var quality=state.quality;
+  return(quality.cloudStepsByCondition&&quality.cloudStepsByCondition[atmosphere.condition])||quality.steps;
+}
+
+function getThreeMotionFps(state,atmosphere){
+  var quality=state.quality,condition=atmosphere&&atmosphere.condition;
+  if(quality.name==='balanced'){
+    var system=window.aetherDesk&&window.aetherDesk.system;
+    if(system&&typeof system.fpsCap==='number'&&isFinite(system.fpsCap)&&system.fpsCap>0)return system.fpsCap;
+  }
+  if(quality.rainFps&&(condition==='rain'||condition==='freezing'))return Math.min(quality.rainFps,quality.motionFps);
+  return quality.motionFps;
 }
 
 function claimThreeFrame(state,key,timestamp,fps){
@@ -932,12 +1109,31 @@ function claimThreeFrame(state,key,timestamp,fps){
 function renderThreeAtmosphere(timestamp){
   var state=S.threeAtmosphere;
   if(!S.useThreeRenderer||!state)return;
-  if(!claimThreeFrame(state,'nextAtmosphereFrame',timestamp,state.quality.fps))return false;
+  var atmosphere=S.atmosphere||deriveAtmosphericState(S.weather);
+  // These backgrounds have neither cloud motion nor stars. Cache them while
+  // the foreground and precipitation continue at their own animation cadence.
+  var quietSky=(atmosphere.condition==='clear'&&atmosphere.isDay)||
+    atmosphere.condition==='fog'||atmosphere.condition==='snow';
+  var directSky=!S.props.showParticles||['rain','thunder','freezing','snow','hail'].indexOf(atmosphere.condition)===-1;
+  var combinedSky=!!(state.presentationMesh&&state.quality.name==='balanced'&&!quietSky&&!directSky&&
+    state.quality.fps>=getThreeMotionFps(state,atmosphere)&&usesThreeCloudVolume());
+  var targetFps=quietSky?2:state.quality.fps;
+  if(state.directSky!==directSky||state.combinedSky!==combinedSky||state.targetFps!==targetFps){
+    state.nextAtmosphereFrame=0;state.nextPresentationFrame=0;
+  }
+  state.directSky=directSky;state.combinedSky=combinedSky;state.targetFps=targetFps;
+  if(!claimThreeFrame(state,'nextAtmosphereFrame',timestamp,state.targetFps))return false;
   updateThreeAtmosphere(timestamp);
   updateThreeClouds(timestamp);
+  // Equal-cadence volume skies can share the particle pass and avoid an
+  // intermediate render target and full-screen texture copy.
+  if(combinedSky){state.lastFrame=timestamp;return true;}
   var submitStart=performance.now();
-  state.renderer.setRenderTarget(state.atmosphereTarget);
+  // Particle-free skies can go straight to the screen; precipitation keeps
+  // its cached background and independent presentation deadline.
+  state.renderer.setRenderTarget(directSky?null:state.atmosphereTarget);
   state.renderer.render(state.scene,state.camera);
+  if(directSky)state.lastPresentationFrame=timestamp;
   var skyDrawCalls=state.renderer.info.render.calls;
   state.renderer.setRenderTarget(null);
   var submitTime=performance.now()-submitStart;
@@ -955,19 +1151,33 @@ function renderThreePresentation(timestamp,atmosphereChanged){
   var state=S.threeAtmosphere;
   if(!S.useThreeRenderer||!state)return;
   var atmosphere=S.atmosphere||deriveAtmosphericState(S.weather);
+  var precipitation=S.props.showParticles&&
+    ['rain','thunder','freezing','snow','hail'].indexOf(atmosphere.condition)!==-1;
+  // Re-present a cached sky only when particles move or the background changed.
+  if(!precipitation&&!atmosphereChanged)return;
+  var targetFps=precipitation?getThreeMotionFps(state,atmosphere):state.quality.fps;
+  var presentationDue=claimThreeFrame(state,'nextPresentationFrame',timestamp,targetFps);
+  if(!presentationDue&&!atmosphereChanged)return;
   updateThreeRain(timestamp,atmosphere);
   updateThreeFreezing(timestamp,atmosphere);
   updateThreeSnow(timestamp,atmosphere);
   updateThreeHail(timestamp,atmosphere);
-  var targetFps=(rendersThreeRain()||rendersThreeFreezing()||rendersThreeSnow()||rendersThreeHail())?state.quality.motionFps:state.quality.fps;
-  if(atmosphereChanged){
-    state.nextPresentationFrame=timestamp+1000/targetFps;
-  }else if(!claimThreeFrame(state,'nextPresentationFrame',timestamp,targetFps))return;
+  if(!precipitation)return;
   var submitStart=performance.now();
   state.renderer.setRenderTarget(null);
-  state.renderer.render(state.presentationScene,state.camera);
+  if(state.combinedSky)state.presentationMesh.material=state.material;
+  try{
+    state.renderer.render(state.presentationScene,state.camera);
+  }finally{
+    if(state.combinedSky)state.presentationMesh.material=state.presentationMaterial;
+  }
   var drawCalls=state.renderer.info.render.calls;
   var submitTime=performance.now()-submitStart;
+  if(state.combinedSky){
+    var skyMetrics=recordThreePerformance(state.performance,timestamp,submitTime,state,drawCalls);
+    if(skyMetrics)state.latestMetrics=skyMetrics;
+    if(skyMetrics||!state.statusReported){state.statusReported=true;reportWeatherRendererStatus();}
+  }
   var metrics=recordThreePerformance(state.motionPerformance,timestamp,submitTime,state,drawCalls);
   if(metrics){state.latestMotionMetrics=metrics;reportWeatherRendererStatus();}
   state.lastPresentationFrame=timestamp;

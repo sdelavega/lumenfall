@@ -1,1 +1,1 @@
-Vendored from ÆtherDesk at a787842d2ae8aefa3c881047b736d562e2a88379. Edit upstream, then run `just sync-wallpapers <ref>`.
+Vendored from ÆtherDesk at a57df7879805370d887161a1622e38f23860a853. Edit upstream, then run `just sync-wallpapers <ref>`.

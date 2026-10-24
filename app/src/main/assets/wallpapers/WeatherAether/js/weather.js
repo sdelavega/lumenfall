@@ -135,16 +135,16 @@ function reverseGeocode(lat,lon){
   return fetchWithTimeout(url,6000)
     .then(function(r){return r.ok?r.json():null;})
     .then(function(d){
-      if(!d)return'Current Location';
+      if(!d)return'Current location';
       // 'city' is the preferred field; 'locality' is a finer-grained fallback
       // (neighbourhood/suburb level) used when city is absent.
       var city=d.city||d.locality||'';
       // principalSubdivisionCode is the short state/province code (e.g. "CA").
       var state=d.principalSubdivisionCode||'';
       var label=(city+(state?', '+state:'')).trim();
-      return label||'Current Location';
+      return label||'Current location';
     })
-    .catch(function(){return'Current Location';});
+    .catch(function(){return'Current location';});
 }
 
 

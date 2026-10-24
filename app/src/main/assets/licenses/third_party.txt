@@ -29,9 +29,9 @@ Matrix Rain [MatrixRain]
 
 Neon City [NeonCity]
   Author: Stephen de la Vega
-  License: MIT
-  Copyright (c) 2026 Stephen de la Vega
+  License: MIT (see NeonCity/LICENSE.txt)
   Source: https://github.com/sdelavega/AetherDesk
+  Includes: three.js - MIT (see NeonCity/vendor/THREE-LICENSE.txt)
 
 Rainfall [Rainfall]
   Author: Stephen de la Vega

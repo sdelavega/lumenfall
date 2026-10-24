@@ -13,7 +13,7 @@ Lumenfall is licensed GPL-3.0-or-later. It bundles and links the following third
 | The Hill | `LivelyTheHill` | Yoichi Kobayashi | MIT | `LivelyTheHill/license.txt` | https://codepen.io/ykob/pen/aBrjaR |
 | Triangles & Light | `LivelyTrianglesLight` | Maksim Surguy | MIT | `LivelyTrianglesLight/license.txt` | https://codepen.io/msurguy/pen/sbIio |
 | Matrix Rain | `MatrixRain` | ÆtherDesk | GPL-3.0-only |  | https://github.com/sdelavega/AetherDesk |
-| Neon City | `NeonCity` | Stephen de la Vega | MIT (Copyright (c) 2026 Stephen de la Vega) |  | https://github.com/sdelavega/AetherDesk |
+| Neon City | `NeonCity` | Stephen de la Vega | MIT; includes three.js (MIT) | `NeonCity/LICENSE.txt` | https://github.com/sdelavega/AetherDesk |
 | Rainfall | `Rainfall` | Stephen de la Vega | GPL-3.0-or-later | `Rainfall/LICENSE.txt` | https://github.com/sdelavega/lumenfall |
 | Weather Aether | `WeatherAether` | ÆtherDesk | GPL-3.0-only; includes three.js (MIT) | `WeatherAether/vendor/THREE-LICENSE.txt` | https://github.com/sdelavega/AetherDesk |
 

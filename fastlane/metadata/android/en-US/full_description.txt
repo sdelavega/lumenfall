@@ -12,7 +12,7 @@ Lumenfall is a live wallpaper host for Android. It runs wallpaper bundles made f
 <b>Privacy</b>
 Lumenfall has no analytics, no accounts and no ads, and makes no network requests of its own. The only network use is by wallpapers you choose to run, and every external domain a wallpaper has contacted is listed in its settings. Known tracker, ad and miner hosts are blocked for every wallpaper, as are local network addresses unless you allow them. Requests made with fetch and XHR are checked at every redirect; WebSocket connections are checked on a best-effort basis.
 
-The bundled Weather Aether wallpaper contacts only Open-Meteo (api.open-meteo.com for forecasts, geocoding-api.open-meteo.com for city search). Its IP-based location (ipapi.co) and BigDataCloud calls run only when a host sets the ipGeolocation capability; Lumenfall never sets it, and its network policy blocks both hosts as defence in depth. Location is optional: grant approximate or precise location per wallpaper, or type a city.
+The bundled Weather Aether and Neon City wallpapers (Neon City shows live weather) contact only Open-Meteo (api.open-meteo.com for forecasts, geocoding-api.open-meteo.com for city search). Their IP-based location (ipapi.co) and BigDataCloud calls run only when a host sets the ipGeolocation capability; Lumenfall never sets it, and its network policy blocks both hosts as defence in depth. Location is optional: grant approximate or precise location per wallpaper, or type a city.
 
 <b>Requirements</b>
 Android 13 or newer, arm64 device.

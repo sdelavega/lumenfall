@@ -364,9 +364,10 @@ the user may grant approximate location):
   Lumenfall does not call it and `pos.label` is not provided. This keeps the
   statement "Lumenfall makes no network requests of its own" true.
 - Lumenfall never sets `window.aetherDesk.system.capabilities.ipGeolocation`,
-  so WeatherAether's ipapi.co and BigDataCloud paths stay off (and the network
-  policy blocks those hosts anyway); it uses device location or a typed city,
-  with `api.open-meteo.com` and `geocoding-api.open-meteo.com` as its only
+  so the ipapi.co and BigDataCloud paths of WeatherAether and NeonCity (which
+  share the same gated weather module) stay off (and the network policy blocks
+  those hosts anyway); they use device location or a typed city, with
+  `api.open-meteo.com` and `geocoding-api.open-meteo.com` as their only
   services.
 - Provider: the framework `LocationManager.getCurrentLocation` (API 30+, our
   minSdk is 33), not FusedLocationProvider. Lumenfall ships no Play Services

@@ -235,7 +235,7 @@ function updateParticles(dt){
   var w=cssW(),h=cssH(),atmosphere=S.atmosphere||deriveAtmosphericState(S.weather);
   S.motionTime+=dt;
   S.windGust=precipitationGust(atmosphere);
-  updateClouds(dt,atmosphere,w);
+  if(!S.useThreeRenderer||!usesThreeCloudVolume())updateClouds(dt,atmosphere,w);
   if(!S.props.showParticles)return;
   var spd=S.props.animationSpeed*(0.65+atmosphere.motionEnergy*0.7),bk=S.weatherBucket;
   var windDrift=precipitationWindDrift(atmosphere)*S.windGust;
@@ -291,8 +291,10 @@ function updateParticles(dt){
       if(p.x>w+12)p.x=-12;
     }
   }
-  for(var i=0;i<S.stars.length;i++){
-    S.stars[i].tw+=S.stars[i].tws*spd*dt;
+  if(!S.useThreeRenderer){
+    for(var i=0;i<S.stars.length;i++){
+      S.stars[i].tw+=S.stars[i].tws*spd*dt;
+    }
   }
   if(bk==='thunder'||bk==='hail'){
     var stormEnergy=atmosphere.stormEnergy||0.72;
@@ -353,11 +355,20 @@ function drawLightningBolt(ctx){
   ctx.restore();
 }
 
+function usesCanvasPrecipitation(bk){
+  return ((bk==='rain'||bk==='thunder')&&!rendersThreeRain())||
+    (bk==='snow'&&!rendersThreeSnow())||(bk==='freezing'&&!rendersThreeFreezing())||
+    (bk==='hail'&&!rendersThreeHail());
+}
+
 function drawParticles(ctx){
   var bk=S.weatherBucket;
   var atmosphere=S.atmosphere||deriveAtmosphericState(S.weather);
   var windDrift=precipitationWindDrift(atmosphere)*S.windGust;
-  var light=getPrecipitationLighting(atmosphere,wallpaperNow());
+  // GPU particles carry their own lighting; only allocate Canvas colors when
+  // a precipitation fallback actually needs them.
+  var canvasPrecipitation=usesCanvasPrecipitation(bk);
+  var light=canvasPrecipitation?getPrecipitationLighting(atmosphere,wallpaperNow()):null;
   // Stars sit behind cloud cover; precipitation sits in front of it.
   if(!S.useThreeRenderer){
     for(var i=0;i<S.stars.length;i++){
@@ -602,6 +613,47 @@ function drawBgMoon(ctx,cx,cy,r){
   ctx.restore();
 }
 
+// The lunar surface is static between tiny phase changes. Reuse its raster
+// while compositing its current position and atmospheric opacity every frame.
+function drawCachedBgMoon(ctx,cx,cy,r){
+  var ratio=Math.min(window.devicePixelRatio||1,S.threeAtmosphere.quality.pixelRatio);
+  var key=[r,ratio,getLunarPhase().toFixed(5)].join(':');
+  var cache=S.balancedMoonPaintCache;
+  if(!cache||cache.key!==key){
+    var padding=Math.ceil(Math.max(4,r)*4),size=padding*2;
+    var canvas=cache?cache.canvas:document.createElement('canvas');
+    canvas.width=canvas.height=Math.max(1,Math.ceil(size*ratio));
+    var cachedContext=canvas.getContext('2d');
+    if(!cachedContext){drawBgMoon(ctx,cx,cy,r);return;}
+    var scale=canvas.width/size;
+    cachedContext.setTransform(scale,0,0,scale,0,0);
+    drawBgMoon(cachedContext,padding,padding,r);
+    cache=S.balancedMoonPaintCache={key:key,canvas:canvas,padding:padding};
+  }
+  ctx.drawImage(cache.canvas,cx-cache.padding,cy-cache.padding,cache.padding*2,cache.padding*2);
+}
+
+// Cache the diffusion-dependent solar gradients; position and opacity are
+// still composited every foreground frame at the selected motion cadence.
+function drawCachedBgSun(ctx,cx,cy,r,t){
+  var ratio=Math.min(window.devicePixelRatio||1,S.threeAtmosphere.quality.pixelRatio);
+  var atmosphere=S.atmosphere||deriveAtmosphericState(S.weather);
+  var key=[r,ratio,atmosphere.lightDiffusion].join(':');
+  var cache=S.sunPaintCache;
+  if(!cache||cache.key!==key){
+    var padding=Math.ceil(Math.max(4,r)*(5.5+atmosphere.lightDiffusion*3)),size=padding*2;
+    var canvas=cache?cache.canvas:document.createElement('canvas');
+    canvas.width=canvas.height=Math.max(1,Math.ceil(size*ratio));
+    var cachedContext=canvas.getContext('2d');
+    if(!cachedContext){drawBgSun(ctx,cx,cy,r,t);return;}
+    var scale=canvas.width/size;
+    cachedContext.setTransform(scale,0,0,scale,0,0);
+    drawBgSun(cachedContext,padding,padding,r,t);
+    cache=S.sunPaintCache={key:key,canvas:canvas,padding:padding};
+  }
+  ctx.drawImage(cache.canvas,cx-cache.padding,cy-cache.padding,cache.padding*2,cache.padding*2);
+}
+
 function drawBgCelestial(ctx,w,h,t){
   var atmosphere=S.atmosphere||deriveAtmosphericState(S.weather);
   var op=atmosphere.celestialVisibility;
@@ -609,7 +661,12 @@ function drawBgCelestial(ctx,w,h,t){
   var track=getCelestialTrack(wallpaperNow(),S.isDay);
   ctx.save();ctx.globalAlpha=op;
   var r=Math.min(w,h)*(S.isDay?0.030:0.034);
-  if(S.isDay)drawBgSun(ctx,w*track.x,h*track.y,r,t);
+  var cached=S.useThreeRenderer&&S.threeAtmosphere&&S.threeAtmosphere.quality.name!=='showcase';
+  if(S.isDay){
+    if(cached)drawCachedBgSun(ctx,w*track.x,h*track.y,r,t);
+    else drawBgSun(ctx,w*track.x,h*track.y,r,t);
+  }else if(cached)
+    drawCachedBgMoon(ctx,w*track.x,h*track.y,r);
   else drawBgMoon(ctx,w*track.x,h*track.y,r);
   ctx.restore();
 }
@@ -635,6 +692,7 @@ function setupVisibility(){
 }
 
 function resizeCanvas(){
+  S.lastForegroundPaintKey=null;
   var dpr=window.devicePixelRatio||1;
   var w=window.innerWidth,h=window.innerHeight;
   S.canvas.width=w*dpr;S.canvas.height=h*dpr;
@@ -658,12 +716,56 @@ function render(timestamp){
   if(S.pendingRendererDemotion)demoteRenderer('three',S.pendingRendererDemotion);
   if(S.renderer==='static')return;
   if(!timestamp)timestamp=performance.now();
+  try{
+    syncThreeQualityProfile();
+  }catch(error){
+    demoteRenderer('three',String(error&&error.message?error.message:error));
+  }
+  if(S.useThreeRenderer&&S.threeAtmosphere&&
+      !claimThreeFrame(S.threeAtmosphere,'nextForegroundFrame',timestamp,getThreeMotionFps(S.threeAtmosphere,S.atmosphere))){
+    syncRendererAnimation();
+    return;
+  }
   var dt=S.lastFrameTime?Math.min((timestamp-S.lastFrameTime)/1000,0.1):0.016;
   S.lastFrameTime=timestamp;
   var w=cssW(),h=cssH(),ctx=S.ctx;
   try{
+    updateParticles(dt);
+    var atmosphere=S.atmosphere,bk=S.weatherBucket;
+    var reusable=S.useThreeRenderer&&S.threeAtmosphere.quality.name!=='showcase'&&
+      atmosphere&&typeof atmosphere.celestialVisibility==='number'&&
+      !(S.lightningAlpha>0.005)&&!(S.lightningBoltAlpha>0.005);
+    if(reusable&&S.props.showParticles){
+      reusable=!usesCanvasPrecipitation(bk);
+    }
+    var foregroundKey=null,foregroundChanged=true;
+    if(reusable){
+      // Reuse both identical pixels and their comparison storage. Invisible
+      // celestial bodies need neither time nor lunar-phase calculations.
+      var visible=atmosphere.celestialVisibility>0;
+      var second=visible?Math.floor(wallpaperNow().getTime()/1000):0;
+      var phase=visible&&!S.isDay?Math.round(getLunarPhase()*100000):0;
+      var sunrise=visible&&S.sunrise?S.sunrise.getTime():0;
+      var sunset=visible&&S.sunset?S.sunset.getTime():0;
+      var ratio=S.threeAtmosphere.quality.pixelRatio;
+      foregroundKey=S.foregroundPaintState||(S.foregroundPaintState={});
+      foregroundChanged=S.lastForegroundPaintKey!==foregroundKey||
+        foregroundKey.w!==w||foregroundKey.h!==h||foregroundKey.ratio!==ratio||
+        foregroundKey.second!==second||foregroundKey.phase!==phase||foregroundKey.isDay!==S.isDay||
+        foregroundKey.sunrise!==sunrise||foregroundKey.sunset!==sunset||
+        foregroundKey.visibility!==atmosphere.celestialVisibility||foregroundKey.diffusion!==atmosphere.lightDiffusion||
+        foregroundKey.particles!==S.props.showParticles||foregroundKey.fog!==S.fogAlpha;
+      if(foregroundChanged){
+        foregroundKey.w=w;foregroundKey.h=h;foregroundKey.ratio=ratio;
+        foregroundKey.second=second;foregroundKey.phase=phase;foregroundKey.isDay=S.isDay;
+        foregroundKey.sunrise=sunrise;foregroundKey.sunset=sunset;
+        foregroundKey.visibility=atmosphere.celestialVisibility;foregroundKey.diffusion=atmosphere.lightDiffusion;
+        foregroundKey.particles=S.props.showParticles;foregroundKey.fog=S.fogAlpha;
+      }
+    }
+    // Preserve Canvas-origin failure handling even if GPU submission also fails.
+    if(foregroundChanged&&S.useThreeRenderer)ctx.clearRect(0,0,w,h);
     if(S.useThreeRenderer){
-      ctx.clearRect(0,0,w,h);
       try{
         var atmosphereChanged=renderThreeAtmosphere(timestamp);
         renderThreePresentation(timestamp,atmosphereChanged);
@@ -671,10 +773,12 @@ function render(timestamp){
         demoteRenderer('three',String(error&&error.message?error.message:error));
       }
     }
-    if(!S.useThreeRenderer)drawAtmosphericSky(ctx,w,h);
-    drawBgCelestial(ctx,w,h,timestamp);
-    updateParticles(dt);
-    drawParticles(ctx);
+    if(foregroundChanged||!S.useThreeRenderer){
+      if(!S.useThreeRenderer)drawAtmosphericSky(ctx,w,h);
+      drawBgCelestial(ctx,w,h,timestamp);
+      drawParticles(ctx);
+      S.lastForegroundPaintKey=S.useThreeRenderer?foregroundKey:null;
+    }
   }catch(error){
     demoteRenderer('canvas',String(error&&error.message?error.message:error));
   }

@@ -43,8 +43,16 @@ class VendoredWeatherAetherTest {
      * `if(!hasHostCapability(...))return ...`. Any unguarded host line fails the test.
      */
     @Test
-    fun noUngatedIpServiceCalls() {
-        val lines = weatherJs.readLines()
+    fun noUngatedIpServiceCalls() = assertIpServiceCallsGated(weatherJs)
+
+    /** Neon City v3 ships the same shared weather module; it must carry the same gate. */
+    @Test
+    fun neonCitySharedWeatherGatesIpServiceCalls() =
+        assertIpServiceCallsGated(File("src/main/assets/wallpapers/NeonCity/js/weather-shared/weather.js"))
+
+    private fun assertIpServiceCallsGated(file: File) {
+        assertTrue("missing ${file.path}", file.isFile)
+        val lines = file.readLines()
         val def = lines.indexOfFirst { it.trimStart().startsWith("function hasHostCapability(") }
         assertTrue("hasHostCapability not defined", def >= 0)
         val defBody = lines.drop(def).take(6).joinToString("\n")
