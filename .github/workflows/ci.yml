@@ -64,3 +64,13 @@ jobs:
       # the maintainer's Mac before tagging (same-host builds are all the gate proves).
       - name: Gate
         run: just gate
+
+      # The reproducible APK and the Rust core from the repro-check tree, for
+      # diffing against a local (macOS) build when the hashes differ.
+      - name: Upload repro APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: repro-apk
+          path: build/repro/
+          if-no-files-found: error
+          retention-days: 14

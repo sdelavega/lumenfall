@@ -33,6 +33,14 @@ if [ ! -f "${apk_a[0]}" ] || [ ! -f "${apk_b[0]}" ]; then
     exit 1
 fi
 
+# Keep one APK and the Rust core it embeds at a stable (gitignored) path, so CI
+# can upload them and a differing cross-host build can be diffed.
+out="$root/build/repro"
+rm -rf "$out"
+mkdir -p "$out"
+cp "${apk_a[0]}" "$out/"
+cp -R "$work/a/lumenfall/app/build/rustJniLibs" "$out/rustJniLibs"
+
 if cmp "${apk_a[0]}" "${apk_b[0]}"; then
     sha=$(shasum -a 256 "${apk_a[0]}" | cut -d' ' -f1)
     echo "repro-check: identical ($sha)"
